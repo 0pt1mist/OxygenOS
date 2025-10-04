@@ -26,7 +26,7 @@ print("Target HDD: " .. hddAddress)
 
 local hdd = component.proxy(hddAddress)
 if not hdd.getLabel() then
-  error("❌ Disk is not formatted! Please format it in BIOS first (press F).", 0)
+  error("❌ Disk is not formatted! Please format it in BIOS first (press F).", 0) --just relabel disk with boot loader
 end
 
 print("Unmounting all filesystems...")
