@@ -1,0 +1,7 @@
+{
+  "files.associations": {
+    "*.ocf": "lua"
+  },
+  "lua.runtime.version": "Lua 5.2",
+  "lua.diagnostics.globals": ["component", "computer", "filesystem", "require", "print", "os", "io"]
+}
