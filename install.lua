@@ -31,9 +31,12 @@ local hdd = component.proxy(hddAddress)
 local currentLabel = hdd.getLabel() or "disk"
 
 print("Unmounting all filesystems...")
-for path in filesystem.mounts() do
-  print("  - " .. path)
-  pcall(filesystem.umount, path)
+for mountInfo in filesystem.mounts() do
+  if type(mountInfo) == "table" and mountInfo.mountPoint then
+    local path = mountInfo.mountPoint
+    print("  - " .. path)
+    pcall(filesystem.umount, path) -- игнорируем ошибки
+  end
 end
 computer.sleep(0.5)
 
