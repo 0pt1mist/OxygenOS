@@ -1,9 +1,8 @@
--- OxygenOS Installer v1.1
--- Fully compatible with OpenComputers 1.12.2 (Lua 5.3)
--- Works with BIOS only — no OpenOS required
+-- OxygenOS Installer v1.6
+
+
 
 local component = require("component")
-local computer = require("computer")
 local filesystem = require("filesystem")
 
 if not component.isAvailable("internet") then
@@ -28,22 +27,22 @@ print("🌬️  OxygenOS Installer")
 print("Target HDD: " .. hddAddress)
 
 local hdd = component.proxy(hddAddress)
-local currentLabel = hdd.getLabel() or "disk"
+if not hdd.getLabel() then
+  error("❌ Disk is not formatted! Please format it in BIOS first (press F).", 0)
+end
 
 print("Unmounting all filesystems...")
 for mountInfo in filesystem.mounts() do
   if type(mountInfo) == "table" and mountInfo.mountPoint then
     local path = mountInfo.mountPoint
     print("  - " .. path)
-    pcall(filesystem.umount, path) -- игнорируем ошибки
+    pcall(filesystem.umount, path)
   end
 end
-computer.sleep(0.5)
+os.sleep(0.5)
 
-print("Formatting disk...")
-hdd.erase()
-hdd.setLabel("OXYGEN")
-computer.sleep(1)
+component.invoke(hddAddress, "setLabel", "OXYGEN")
+os.sleep(0.5)
 
 print("Mounting as /OXYGEN...")
 filesystem.mount(hddAddress, "/OXYGEN")
