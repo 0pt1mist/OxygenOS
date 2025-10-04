@@ -30,20 +30,12 @@ print("Target HDD: " .. hddAddress)
 local hdd = component.proxy(hddAddress)
 local currentLabel = hdd.getLabel() or "disk"
 
-local mountPoint = nil
+print("Unmounting all filesystems...")
 for path in filesystem.mounts() do
-  local addr = filesystem.getMountPoint(path)
-  if addr == hddAddress then
-    mountPoint = path
-    break
-  end
+  print("  - " .. path)
+  pcall(filesystem.umount, path)
 end
-
-if mountPoint then
-  print("Unmounting existing filesystem at " .. mountPoint .. "...")
-  filesystem.umount(mountPoint)
-  computer.sleep(0.5)
-end
+computer.sleep(0.5)
 
 print("Formatting disk...")
 hdd.erase()
