@@ -1,27 +1,21 @@
--- OxygenOS Installer v0.3
--- Works with OpenComputers BIOS (no OpenOS required)
+-- OxygenOS Installer v1.1
+-- Fully compatible with OpenComputers 1.12.2 (Lua 5.3)
+-- Works with BIOS only — no OpenOS required
 
 local component = require("component")
 local computer = require("computer")
 local filesystem = require("filesystem")
 
 if not component.isAvailable("internet") then
-  error("❌ Internet Card is required to install OxygenOS!", 0)
+  error("❌ Internet Card is required!", 0)
 end
-
-if not component.isAvailable("filesystem") then
-  error("❌ No disk drive or HDD found!", 0)
-end
-
-print("🌬️  OxygenOS Installer")
-print("Scanning for install target...")
 
 local hddAddress = nil
-for address in component.list("filesystem") do
-  local proxy = component.proxy(address)
-  local totalSpace = proxy.spaceTotal()
-  if totalSpace and totalSpace > 100 * 1024 then
-    hddAddress = address
+for addr in component.list("filesystem") do
+  local fs = component.proxy(addr)
+  local total = fs.spaceTotal()
+  if total and total > 100 * 1024 then -- >100 KB
+    hddAddress = addr
     break
   end
 end
@@ -30,19 +24,28 @@ if not hddAddress then
   error("❌ No suitable HDD found (need >100 KB)!", 0)
 end
 
+print("🌬️  OxygenOS Installer")
+print("Target HDD: " .. hddAddress)
+
 local hdd = component.proxy(hddAddress)
 local currentLabel = hdd.getLabel() or "disk"
-print("Target disk: " .. currentLabel .. " (" .. hddAddress .. ")")
 
-local mountPoint = "/" .. currentLabel
-if filesystem.exists(mountPoint) then
-  print("Unmounting existing filesystem...")
-  pcall(filesystem.umount, mountPoint)
+local mountPoint = nil
+for path in filesystem.mounts() do
+  local addr = filesystem.getMountPoint(path)
+  if addr == hddAddress then
+    mountPoint = path
+    break
+  end
+end
+
+if mountPoint then
+  print("Unmounting existing filesystem at " .. mountPoint .. "...")
+  filesystem.umount(mountPoint)
   computer.sleep(0.5)
 end
 
 print("Formatting disk...")
-local hdd = component.proxy(hddAddress)
 hdd.erase()
 hdd.setLabel("OXYGEN")
 computer.sleep(1)
@@ -50,13 +53,12 @@ computer.sleep(1)
 print("Mounting as /OXYGEN...")
 filesystem.mount(hddAddress, "/OXYGEN")
 
-local function downloadFile(url, path)
+local function download(url, path)
   print("📥 Downloading: " .. path)
   local internet = component.internet
-
   local response, err = internet.request(url)
   if not response then
-    error("Failed to connect to " .. url .. ": " .. tostring(err), 0)
+    error("Failed to fetch " .. url .. ": " .. tostring(err), 0)
   end
 
   local content = ""
@@ -72,15 +74,13 @@ local function downloadFile(url, path)
   end
   file:write(content)
   file:close()
-
-  print("✅ Saved to " .. path)
-  return true
+  print("✅ Saved")
 end
 
 local GITHUB_USER = "0pt1mist"
-local BASE_URL = "https://raw.githubusercontent.com/" .. GITHUB_USER .. "/OxygenOS/main"
+local BASE = "https://raw.githubusercontent.com/" .. GITHUB_USER .. "/OxygenOS/main"
 
-downloadFile(BASE_URL .. "/kernel/init.lua", "/OXYGEN/init.lua")
+download(BASE .. "/kernel/init.lua", "/OXYGEN/init.lua")
 
 local dirs = {
   "/OXYGEN/bin",
@@ -98,11 +98,8 @@ for _, dir in ipairs(dirs) do
   end
 end
 
-downloadFile(BASE_URL .. "/kernel/bin/shell", "/OXYGEN/bin/shell")
+download(BASE .. "/kernel/bin/shell", "/OXYGEN/bin/shell")
 
 print("")
-print("🎉 OxygenOS installation complete!")
-print("💡 Next steps:")
-print("  1. Remove the floppy disk (if any)")
-print("  2. Reboot the computer")
-print("  3. Enjoy your new OS!")
+print("🎉 OxygenOS installed successfully!")
+print("➡️  Reboot to start your new OS.")
