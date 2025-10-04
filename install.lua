@@ -30,7 +30,8 @@ if not hddAddress then
   error("❌ No suitable HDD found (need >100 KB)!", 0)
 end
 
-local currentLabel = filesystem.getDriveLabel(hddAddress) or "disk"
+local hdd = component.proxy(hddAddress)
+local currentLabel = hdd.getLabel() or "disk"
 print("Target disk: " .. currentLabel .. " (" .. hddAddress .. ")")
 
 local mountPoint = "/" .. currentLabel
