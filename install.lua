@@ -1,43 +1,107 @@
--- install.lua
+-- OxygenOS Installer v0.3
+-- Works with OpenComputers BIOS (no OpenOS required)
+
 local component = require("component")
-local fs = require("filesystem")
-local shell = require("shell")
+local computer = require("computer")
+local filesystem = require("filesystem")
 
 if not component.isAvailable("internet") then
-  print("❌ Internet Card required!")
-  return
+  error("❌ Internet Card is required to install OxygenOS!", 0)
+end
+
+if not component.isAvailable("filesystem") then
+  error("❌ No disk drive or HDD found!", 0)
 end
 
 print("🌬️  OxygenOS Installer")
-print("Looking for HDD...")
+print("Scanning for install target...")
 
-local hdd = nil
-for addr, name in component.list("filesystem") do
-  if name == "filesystem" then hdd = addr; break end
+local hddAddress = nil
+for address in component.list("filesystem") do
+  local proxy = component.proxy(address)
+  local totalSpace = proxy.spaceTotal()
+  if totalSpace and totalSpace > 100 * 1024 then
+    hddAddress = address
+    break
+  end
 end
 
-if not hdd then
-  print("❌ No HDD found!")
-  return
+if not hddAddress then
+  error("❌ No suitable HDD found (need >100 KB)!", 0)
 end
 
-local label = fs.getLabel(hdd)
-if label then shell.execute("umount /" .. label) end
-component.invoke(hdd, "erase")
-component.invoke(hdd, "setLabel", "OXYGEN")
-os.sleep(1)
-shell.execute("mount " .. hdd .. " /OXYGEN")
+local currentLabel = filesystem.getDriveLabel(hddAddress) or "disk"
+print("Target disk: " .. currentLabel .. " (" .. hddAddress .. ")")
 
-local url = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/main/kernel/init.lua"
-if not shell.execute("wget " .. url .. " /OXYGEN/init.lua") then
-  print("⚠️ Failed to download init.lua")
-  return
+local mountPoint = "/" .. currentLabel
+if filesystem.exists(mountPoint) then
+  print("Unmounting existing filesystem...")
+  pcall(filesystem.umount, mountPoint)
+  computer.sleep(0.5)
 end
 
-fs.makeDirectory("/OXYGEN/bin")
+print("Formatting disk...")
+local hdd = component.proxy(hddAddress)
+hdd.erase()
+hdd.setLabel("OXYGEN")
+computer.sleep(1)
 
-local shellUrl = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/main/kernel/bin/shell"
-shell.execute("wget " .. shellUrl .. " /OXYGEN/bin/shell")
+print("Mounting as /OXYGEN...")
+filesystem.mount(hddAddress, "/OXYGEN")
 
-print("✅ Installation complete!")
-print("🔄 Reboot to start OxygenOS.")
+local function downloadFile(url, path)
+  print("📥 Downloading: " .. path)
+  local internet = component.internet
+
+  local response, err = internet.request(url)
+  if not response then
+    error("Failed to connect to " .. url .. ": " .. tostring(err), 0)
+  end
+
+  local content = ""
+  local chunk = response:read(math.huge)
+  while chunk do
+    content = content .. chunk
+    chunk = response:read(math.huge)
+  end
+
+  local file = io.open(path, "wb")
+  if not file then
+    error("Cannot write to " .. path, 0)
+  end
+  file:write(content)
+  file:close()
+
+  print("✅ Saved to " .. path)
+  return true
+end
+
+local GITHUB_USER = "0pt1mist"
+local BASE_URL = "https://raw.githubusercontent.com/" .. GITHUB_USER .. "/OxygenOS/main"
+
+downloadFile(BASE_URL .. "/kernel/init.lua", "/OXYGEN/init.lua")
+
+local dirs = {
+  "/OXYGEN/bin",
+  "/OXYGEN/sbin",
+  "/OXYGEN/etc",
+  "/OXYGEN/dev",
+  "/OXYGEN/tmp",
+  "/OXYGEN/home",
+  "/OXYGEN/var",
+  "/OXYGEN/usr"
+}
+for _, dir in ipairs(dirs) do
+  if not filesystem.exists(dir) then
+    filesystem.makeDirectory(dir)
+  end
+end
+
+downloadFile(BASE_URL .. "/kernel/bin/shell", "/OXYGEN/bin/shell")
+
+print("")
+print("🎉 OxygenOS installation complete!")
+print("💡 Next steps:")
+print("  1. Remove the floppy disk (if any)")
+print("  2. Reboot the computer")
+print("  3. Enjoy your new OS!")
