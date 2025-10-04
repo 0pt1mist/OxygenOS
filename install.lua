@@ -1,6 +1,4 @@
--- OxygenOS Installer v1.6
-
-
+-- OxygenOS Installer v0.6
 
 local component = require("component")
 local filesystem = require("filesystem")
@@ -13,7 +11,7 @@ local hddAddress = nil
 for addr in component.list("filesystem") do
   local fs = component.proxy(addr)
   local total = fs.spaceTotal()
-  if total and total > 100 * 1024 then -- >100 KB
+  if total and total > 100 * 1024 then
     hddAddress = addr
     break
   end
@@ -23,7 +21,7 @@ if not hddAddress then
   error("❌ No suitable HDD found (need >100 KB)!", 0)
 end
 
-print("🌬️  OxygenOS Installer")
+print("🍃 OxygenOS Installer")
 print("Target HDD: " .. hddAddress)
 
 local hdd = component.proxy(hddAddress)
@@ -56,10 +54,11 @@ local function download(url, path)
   end
 
   local content = ""
-  local chunk = response:read(math.huge)
+  local chunk = response:read(65536) -- shit still not working i dont know why 
   while chunk do
     content = content .. chunk
-    chunk = response:read(math.huge)
+    chunk = response:read(65536) -- shit still not working i dont know why 
+
   end
 
   local file = io.open(path, "wb")
@@ -95,5 +94,5 @@ end
 download(BASE .. "/kernel/bin/shell", "/OXYGEN/bin/shell")
 
 print("")
-print("🎉 OxygenOS installed successfully!")
-print("➡️  Reboot to start your new OS.")
+print("🍃 OxygenOS installed successfully!")
+print("➡️ Reboot to start your new OS.")
