@@ -33,23 +33,29 @@ end
 local function downloadFile(url, path)
   print("📥 " .. path)
   local handle, err = component.invoke(internetAddr, "request", url)
-  if not handle then error("HTTP error: " .. tostring(err)) end
+  if not handle then
+    error("HTTP error: " .. tostring(err))
+  end
 
   local fileHandle = hdd.open(path, "wb")
-  if not fileHandle then error("Cannot create " .. path) end
+  if not fileHandle then
+    error("Cannot create " .. path)
+  end
 
   while true do
-    local chunk, err = handle:read(65536)
+    local chunk, reason = handle.read(65536)  -- ✅ Без двоеточия!
     if chunk then
       hdd.write(fileHandle, chunk)
     else
-      if err then error("Download failed: " .. tostring(err)) end
+      if reason then
+        error("Download failed: " .. tostring(reason))
+      end
       break
     end
   end
 
   hdd.close(fileHandle)
-  handle:close()
+  handle.close()  -- тоже без двоеточия
   print("✅ Done")
 end
 
