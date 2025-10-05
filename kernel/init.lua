@@ -1,84 +1,83 @@
 -- kernel/init.lua
--- OxygenOS v0.1 — Minimal Boot (BIOS-compatible, no OpenOS dependency)
+-- OxygenOS v0.1 — BIOS-compatible, no OpenOS dependency
 
--- === Проверка: запущено в OpenComputers? ===
-if not component or not component.list then
-  error("OxygenOS requires OpenComputers!", 0)
-end
-
--- === Монтирование всех дисков ===
-print("Mounting filesystems...")
-for address in component.list("filesystem") do
-  -- Получаем метку через прокси (надёжно)
-  local proxy = component.proxy(address)
-  local label = proxy.getLabel() or "disk"
-  local mountPoint = "/" .. label
-
-  -- Создаём точку монтирования (если нужно)
-  -- В BIOS нет filesystem.makeDirectory, поэтому пропускаем
-  -- Доверяем, что / уже существует
-
-  -- Отмонтируем и смонтируем
-  pcall(component.invoke, address, "mount", mountPoint)
-end
-
--- === Проверка: существует ли /bin/shell? ===
--- Ищем любой диск, где есть /bin/shell
-local shellFound = false
-for address in component.list("filesystem") do
-  local proxy = component.proxy(address)
-  if proxy.exists("/bin/shell") then
-    -- Убедимся, что диск смонтирован как корень
-    -- (обычно это тот, с которого загрузились)
-    shellFound = true
-    break
+-- === Безопасный print ===
+local function safePrint(...)
+  if type(print) == "function" then
+    print(...)
+  else
+    local args = {...}
+    for i = 1, #args do
+      io.write(tostring(args[i]) .. "\t")
+    end
+    io.write("\n")
   end
 end
 
-if not shellFound then
-  error("Shell not found! Corrupted or incomplete installation.", 0)
+if not print then
+  print = safePrint
 end
 
--- === Приветствие ===
-print("\27[36m🌬️  OxygenOS v0.1\27[0m")
-print("Unix-like OS for OpenComputers 1.12.2")
-print("")
+-- === Проверка: запущено в OpenComputers? ===
+if not component or not component.list then
+  safePrint("OxygenOS requires OpenComputers!")
+  return
+end
 
--- === Запуск shell ===
--- В BIOS нет dofile, но можно использовать loadfile + load
+safePrint("🌬️  OxygenOS v0.1")
+safePrint("Unix-like OS for OpenComputers 1.12.2")
+safePrint("")
+
+-- === Проверка: существует ли /bin/shell? ===
 local shellPath = "/bin/shell"
-local fileHandle = io.open(shellPath, "r")
-if not fileHandle then
-  error("Cannot open shell script: " .. shellPath, 0)
+local file = io.open(shellPath, "r")
+if not file then
+  safePrint("ERROR: Shell not found! Corrupted installation.")
+  safePrint("Expected: /bin/shell on boot disk.")
+  return
+end
+file:close()
+
+-- === Загрузка и запуск shell ===
+local content = ""
+local f = io.open(shellPath, "r")
+if f then
+  content = f:read("*a")
+  f:close()
 end
 
-local content = fileHandle:read("*a")
-fileHandle:close()
+if content == "" then
+  safePrint("ERROR: Shell is empty!")
+  return
+end
 
 local fn, err = load(content, "@shell", "t", {})
 if not fn then
-  error("Shell syntax error: " .. tostring(err), 0)
+  safePrint("SHELL LOAD ERROR: " .. tostring(err))
+  return
 end
 
--- Запускаем shell в песочнице
+-- Запуск
 local success, err = pcall(fn)
 if not success then
-  print("Shell crashed: " .. tostring(err))
-  print("Dropping to emergency prompt...")
+  safePrint("SHELL CRASHED: " .. tostring(err))
+  safePrint("EMERGENCY MODE")
 
-  -- Простой emergency shell
   while true do
-    io.write("EMERGENCY# ")
-    local line = io.read()
-    if line == "reboot" then
+    io.write("# ")
+    local cmd = io.read()
+    if cmd == "reboot" then
       os.exit()
-    elseif line == "ls" then
-      for addr in component.list("filesystem") do
-        local p = component.proxy(addr)
-        for item in p.list("/") do print(item) end
+    elseif cmd == "ls" then
+      local fsys = component.list("filesystem")()
+      if fsys then
+        local proxy = component.proxy(fsys)
+        for item in proxy.list("/") do
+          safePrint(item)
+        end
       end
     else
-      print("Unknown command")
+      safePrint("Unknown command")
     end
   end
 end
