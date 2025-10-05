@@ -1,9 +1,9 @@
 -- kernel/init.lua
 -- OxygenOS v0.1 — Minimal Boot
 
-if not pcall(require, "component") then
-  error("OxygenOS requires OpenComputers!")
-end
+--if not pcall(require, "component") then
+--  error("OxygenOS requires OpenComputers!")
+--end
 
 local component = require("component")
 local fs = require("filesystem")
