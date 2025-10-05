@@ -1,36 +1,84 @@
 -- kernel/init.lua
--- OxygenOS v0.1 — Minimal Boot
+-- OxygenOS v0.1 — Minimal Boot (BIOS-compatible, no OpenOS dependency)
 
---if not pcall(require, "component") then
---  error("OxygenOS requires OpenComputers!")
---end
+-- === Проверка: запущено в OpenComputers? ===
+if not component or not component.list then
+  error("OxygenOS requires OpenComputers!", 0)
+end
 
-local component = require("component")
-local fs = require("filesystem")
-local shell = require("shell")
-
+-- === Монтирование всех дисков ===
 print("Mounting filesystems...")
 for address in component.list("filesystem") do
-  local label = fs.getDriveLabel(address) or "disk"
+  -- Получаем метку через прокси (надёжно)
+  local proxy = component.proxy(address)
+  local label = proxy.getLabel() or "disk"
   local mountPoint = "/" .. label
-  if not fs.exists(mountPoint) then
-    fs.makeDirectory(mountPoint)
-  end
-  pcall(shell.execute, "umount " .. mountPoint)
-  shell.execute("mount " .. address .. " " .. mountPoint)
+
+  -- Создаём точку монтирования (если нужно)
+  -- В BIOS нет filesystem.makeDirectory, поэтому пропускаем
+  -- Доверяем, что / уже существует
+
+  -- Отмонтируем и смонтируем
+  pcall(component.invoke, address, "mount", mountPoint)
 end
 
-local requiredDirs = {
-  "/bin", "/sbin", "/etc", "/dev", "/tmp", "/home", "/var", "/usr"
-}
-for _, dir in ipairs(requiredDirs) do
-  if not fs.exists(dir) then
-    fs.makeDirectory(dir)
+-- === Проверка: существует ли /bin/shell? ===
+-- Ищем любой диск, где есть /bin/shell
+local shellFound = false
+for address in component.list("filesystem") do
+  local proxy = component.proxy(address)
+  if proxy.exists("/bin/shell") then
+    -- Убедимся, что диск смонтирован как корень
+    -- (обычно это тот, с которого загрузились)
+    shellFound = true
+    break
   end
 end
 
+if not shellFound then
+  error("Shell not found! Corrupted or incomplete installation.", 0)
+end
+
+-- === Приветствие ===
 print("\27[36m🌬️  OxygenOS v0.1\27[0m")
 print("Unix-like OS for OpenComputers 1.12.2")
 print("")
 
-dofile("/bin/shell")
+-- === Запуск shell ===
+-- В BIOS нет dofile, но можно использовать loadfile + load
+local shellPath = "/bin/shell"
+local fileHandle = io.open(shellPath, "r")
+if not fileHandle then
+  error("Cannot open shell script: " .. shellPath, 0)
+end
+
+local content = fileHandle:read("*a")
+fileHandle:close()
+
+local fn, err = load(content, "@shell", "t", {})
+if not fn then
+  error("Shell syntax error: " .. tostring(err), 0)
+end
+
+-- Запускаем shell в песочнице
+local success, err = pcall(fn)
+if not success then
+  print("Shell crashed: " .. tostring(err))
+  print("Dropping to emergency prompt...")
+
+  -- Простой emergency shell
+  while true do
+    io.write("EMERGENCY# ")
+    local line = io.read()
+    if line == "reboot" then
+      os.exit()
+    elseif line == "ls" then
+      for addr in component.list("filesystem") do
+        local p = component.proxy(addr)
+        for item in p.list("/") do print(item) end
+      end
+    else
+      print("Unknown command")
+    end
+  end
+end
