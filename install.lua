@@ -1,11 +1,11 @@
--- OxygenOS Installer
+-- OxygenOS Installer v0.9
 
 local component = require("component")
 local computer = require("computer")
 
 local function getComponent(name)
   local addr = component.list(name)()
-  if not addr then error("❌ Required " .. name .. " missing!", 0) end
+  if not addr then error("Required " .. name .. " missing!", 0) end
   return addr
 end
 
@@ -21,17 +21,17 @@ for addr in component.list("filesystem") do
 end
 
 if not hddAddr then
-  error("❌ No suitable HDD found (need >1 MB)!", 0)
+  error("No suitable HDD found (need >1 MB)!", 0)
 end
 
 local hdd = component.proxy(hddAddr)
 
 if not hdd.getLabel() then
-  error("❌ Disk not formatted! Format in BIOS (press F).", 0)
+  error("Disk not formatted! Format in BIOS (press F).", 0)
 end
 
 local function downloadFile(url, path)
-  print("📥 " .. path)
+  print("Downloading: " .. path)
   local handle, err = component.invoke(internetAddr, "request", url)
   if not handle then
     error("HTTP error: " .. tostring(err))
@@ -43,7 +43,7 @@ local function downloadFile(url, path)
   end
 
   while true do
-    local chunk, reason = handle.read(65536)  -- ✅ Без двоеточия!
+    local chunk, reason = handle.read(65536)
     if chunk then
       hdd.write(fileHandle, chunk)
     else
@@ -55,8 +55,8 @@ local function downloadFile(url, path)
   end
 
   hdd.close(fileHandle)
-  handle.close()  -- тоже без двоеточия
-  print("✅ Done")
+  handle.close()
+  print("Done")
 end
 
 hdd.setLabel("OXYGEN")
@@ -70,5 +70,5 @@ local BASE = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/main"
 downloadFile(BASE .. "/kernel/init.lua", "/init.lua")
 downloadFile(BASE .. "/kernel/bin/shell", "/bin/shell")
 
-print("🎉 OxygenOS installed!")
-print("➡️ Reboot to start.")
+print("OxygenOS installed!")
+print("Reboot to start.")
