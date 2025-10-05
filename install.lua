@@ -1,98 +1,68 @@
--- OxygenOS Installer v0.6
+-- OxygenOS Installer
 
 local component = require("component")
-local filesystem = require("filesystem")
+local computer = require("computer")
 
-if not component.isAvailable("internet") then
-  error("❌ Internet Card is required!", 0)
+local function getComponent(name)
+  local addr = component.list(name)()
+  if not addr then error("❌ Required " .. name .. " missing!", 0) end
+  return addr
 end
 
-local hddAddress = nil
+local internetAddr = getComponent("internet")
+local hddAddr = nil
+
 for addr in component.list("filesystem") do
   local fs = component.proxy(addr)
-  local total = fs.spaceTotal()
-  if total and total > 100 * 1024 then
-    hddAddress = addr
+  if fs.spaceTotal() and fs.spaceTotal() > 1024 * 1024 then
+    hddAddr = addr
     break
   end
 end
 
-if not hddAddress then
-  error("❌ No suitable HDD found (need >100 KB)!", 0)
+if not hddAddr then
+  error("❌ No suitable HDD found (need >1 MB)!", 0)
 end
 
-print("🍃 OxygenOS Installer")
-print("Target HDD: " .. hddAddress)
+local hdd = component.proxy(hddAddr)
 
-local hdd = component.proxy(hddAddress)
 if not hdd.getLabel() then
-  error("❌ Disk is not formatted! Please format it in BIOS first (press F).", 0) --just relabel disk with boot loader
+  error("❌ Disk not formatted! Format in BIOS (press F).", 0)
 end
 
-print("Unmounting all filesystems...")
-for mountInfo in filesystem.mounts() do
-  if type(mountInfo) == "table" and mountInfo.mountPoint then
-    local path = mountInfo.mountPoint
-    print("  - " .. path)
-    pcall(filesystem.umount, path)
-  end
-end
-os.sleep(0.5)
+local function downloadFile(url, path)
+  print("📥 " .. path)
+  local handle, err = component.invoke(internetAddr, "request", url)
+  if not handle then error("HTTP error: " .. tostring(err)) end
 
-component.invoke(hddAddress, "setLabel", "OXYGEN")
-os.sleep(0.5)
+  local fileHandle = hdd.open(path, "wb")
+  if not fileHandle then error("Cannot create " .. path) end
 
-print("Mounting as /OXYGEN...")
-filesystem.mount(hddAddress, "/OXYGEN")
-
-local function download(url, path)
-  print("📥 Downloading: " .. path)
-  local internet = component.internet
-  local response, err = internet.request(url)
-  if not response then
-    error("Failed to fetch " .. url .. ": " .. tostring(err), 0)
+  while true do
+    local chunk, err = handle:read(65536)
+    if chunk then
+      hdd.write(fileHandle, chunk)
+    else
+      if err then error("Download failed: " .. tostring(err)) end
+      break
+    end
   end
 
-  local content = ""
-  local chunk = response:read(65536) -- shit still not working i dont know why 
-  while chunk do
-    content = content .. chunk
-    chunk = response:read(65536) -- shit still not working i dont know why 
-
-  end
-
-  local file = io.open(path, "wb")
-  if not file then
-    error("Cannot write to " .. path, 0)
-  end
-  file:write(content)
-  file:close()
-  print("✅ Saved")
+  hdd.close(fileHandle)
+  handle:close()
+  print("✅ Done")
 end
 
-local GITHUB_USER = "0pt1mist"
-local BASE = "https://raw.githubusercontent.com/" .. GITHUB_USER .. "/OxygenOS/main"
+hdd.setLabel("OXYGEN")
 
-download(BASE .. "/kernel/init.lua", "/OXYGEN/init.lua")
-
-local dirs = {
-  "/OXYGEN/bin",
-  "/OXYGEN/sbin",
-  "/OXYGEN/etc",
-  "/OXYGEN/dev",
-  "/OXYGEN/tmp",
-  "/OXYGEN/home",
-  "/OXYGEN/var",
-  "/OXYGEN/usr"
-}
-for _, dir in ipairs(dirs) do
-  if not filesystem.exists(dir) then
-    filesystem.makeDirectory(dir)
-  end
+local dirs = {"/bin", "/etc", "/usr"}
+for _, d in ipairs(dirs) do
+  if not hdd.exists(d) then hdd.makeDirectory(d) end
 end
 
-download(BASE .. "/kernel/bin/shell", "/OXYGEN/bin/shell")
+local BASE = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/main"
+downloadFile(BASE .. "/kernel/init.lua", "/init.lua")
+downloadFile(BASE .. "/kernel/bin/shell", "/bin/shell")
 
-print("")
-print("🍃 OxygenOS installed successfully!")
-print("➡️ Reboot to start your new OS.")
+print("🎉 OxygenOS installed!")
+print("➡️ Reboot to start.")
