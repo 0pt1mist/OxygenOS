@@ -1,25 +1,90 @@
--- kernel/bin/shell
+-- kernel/bin/shell для EEPROM
 local function print(...)
   local args = {...}
   local message = ""
+  
   for i, arg in ipairs(args) do
     if i > 1 then message = message .. " " end
     message = message .. tostring(arg)
   end
   
-  for addr in component.list("screen") do
-    local screen = component.proxy(addr)
-    local gpuAddr = screen.getGPU()
-    if gpuAddr then
-      local gpu = component.proxy(gpuAddr)
-      gpu.set(1, 1, message)
+  -- Работаем с GPU напрямую
+  local gpu = component.gpu
+  if not gpu then
+    for addr in component.list("gpu") do
+      gpu = component.proxy(addr)
       break
+    end
+  end
+  
+  if gpu then
+    -- Привязываемся к экрану если нужно
+    if not gpu.getScreen() then
+      for screenAddr in component.list("screen") do
+        gpu.bind(screenAddr)
+        break
+      end
+    end
+    gpu.set(1, 1, message)
+  end
+end
+
+local function read()
+  local input = ""
+  while true do
+    local signal = {computer.pullSignal()}
+    if signal[1] == "key_down" then
+      local char = string.char(signal[3])
+      if char == "\r" or char == "\n" then
+        return input
+      else
+        input = input .. char
+      end
     end
   end
 end
 
+local commands = {
+  help = function()
+    print("Commands: help, reboot, ls")
+  end,
+  
+  reboot = function()
+    computer.shutdown(true)
+  end,
+  
+  ls = function(path)
+    path = path or "/"
+    for addr in component.list("filesystem") do
+      local fs = component.proxy(addr)
+      if fs.exists(path) then
+        for item in fs.list(path) do
+          print(item)
+        end
+        return
+      end
+    end
+    print("Not found: " .. path)
+  end
+}
+
 print("OxygenOS Shell")
 
 while true do
-  computer.pullSignal()
+  print("> ")
+  local input = read()
+  
+  if input then
+    local cmd = input:match("^%s*(%S+)")
+    local arg = input:match("^%s*%S+%s+(.+)$")
+    
+    if cmd and commands[cmd] then
+      local success, err = pcall(commands[cmd], arg)
+      if not success then
+        print("Error: " .. tostring(err))
+      end
+    elseif cmd then
+      print("Unknown: " .. cmd)
+    end
+  end
 end
