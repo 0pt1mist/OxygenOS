@@ -1,96 +1,25 @@
--- kernel/bin/shell для EEPROM
--- Базовая оболочка без зависимостей от io
-
+-- kernel/bin/shell
 local function print(...)
   local args = {...}
   local message = ""
-  
   for i, arg in ipairs(args) do
-    if i > 1 then message = message .. "\t" end
+    if i > 1 then message = message .. " " end
     message = message .. tostring(arg)
   end
   
-  -- Пытаемся вывести на экран
   for addr in component.list("screen") do
     local screen = component.proxy(addr)
-    local gpu = screen.getGPU()
-    if gpu then
-      local w, h = gpu.getResolution()
-      -- Простой вывод (без прокрутки)
+    local gpuAddr = screen.getGPU()
+    if gpuAddr then
+      local gpu = component.proxy(gpuAddr)
       gpu.set(1, 1, message)
       break
     end
   end
 end
 
-local function read()
-  -- Ожидаем ввод с клавиатуры
-  while true do
-    local signal = {computer.pullSignal()}
-    if signal[1] == "key_down" then
-      local char = string.char(signal[3])
-      if char == "\r" or char == "\n" then
-        return currentInput or ""
-      else
-        currentInput = (currentInput or "") .. char
-        -- Можно добавить отображение ввода на экране
-      end
-    end
-  end
-end
-
--- Базовые команды
-local commands = {
-  help = function()
-    print("OxygenOS Emergency Shell")
-    print("Commands: help, reboot, ls")
-  end,
-  
-  reboot = function()
-    computer.shutdown(true)
-  end,
-  
-  ls = function(path)
-    path = path or "/"
-    local found = false
-    
-    for addr in component.list("filesystem") do
-      local fs = component.proxy(addr)
-      if fs.exists(path) then
-        found = true
-        print("Contents of " .. path .. ":")
-        for item in fs.list(path) do
-          print("  " .. item)
-        end
-        break
-      end
-    end
-    
-    if not found then
-      print("Not found: " .. path)
-    end
-  end
-}
-
--- Основной цикл
-print("OxygenOS Emergency Shell")
-print("Type 'help' for commands")
+print("OxygenOS Shell")
 
 while true do
-  print("> ")
-  local input = read()
-  
-  if input then
-    local cmd = input:match("^%s*(%S+)")
-    local arg = input:match("^%s*%S+%s+(.+)$")
-    
-    if cmd and commands[cmd] then
-      local success, err = pcall(commands[cmd], arg)
-      if not success then
-        print("Error: " .. tostring(err))
-      end
-    elseif cmd then
-      print("Unknown command: " .. cmd)
-    end
-  end
+  computer.pullSignal()
 end
