@@ -17,7 +17,7 @@ local function getAvailableDisks()
         fs = fs,
         label = fs.getLabel() or "No Label",
         size = math.floor(fs.spaceTotal() / 1024) .. " KB",
-        free = math.floor(fs.spaceFree() / 1024) .. " KB"
+        free = math.floor((fs.spaceTotal() - fs.spaceUsed()) / 1024) .. " KB"
       })
     end
   end
