@@ -1,16 +1,53 @@
--- kernel/bin/shell
--- Ultra-light shell for low memory
+-- kernel/bin/shell для EEPROM
+-- Базовая оболочка без зависимостей от io
 
--- Базовые команды без лишних зависимостей
+local function print(...)
+  local args = {...}
+  local message = ""
+  
+  for i, arg in ipairs(args) do
+    if i > 1 then message = message .. "\t" end
+    message = message .. tostring(arg)
+  end
+  
+  -- Пытаемся вывести на экран
+  for addr in component.list("screen") do
+    local screen = component.proxy(addr)
+    local gpu = screen.getGPU()
+    if gpu then
+      local w, h = gpu.getResolution()
+      -- Простой вывод (без прокрутки)
+      gpu.set(1, 1, message)
+      break
+    end
+  end
+end
+
+local function read()
+  -- Ожидаем ввод с клавиатуры
+  while true do
+    local signal = {computer.pullSignal()}
+    if signal[1] == "key_down" then
+      local char = string.char(signal[3])
+      if char == "\r" or char == "\n" then
+        return currentInput or ""
+      else
+        currentInput = (currentInput or "") .. char
+        -- Можно добавить отображение ввода на экране
+      end
+    end
+  end
+end
+
+-- Базовые команды
 local commands = {
   help = function()
-    print("OxygenOS Shell v0.1")
-    print("Commands: ls, exit, help")
+    print("OxygenOS Emergency Shell")
+    print("Commands: help, reboot, ls")
   end,
   
-  exit = function()
-    print("Shutting down...")
-    os.exit()
+  reboot = function()
+    computer.shutdown(true)
   end,
   
   ls = function(path)
@@ -21,7 +58,7 @@ local commands = {
       local fs = component.proxy(addr)
       if fs.exists(path) then
         found = true
-        print("Directory: " .. path)
+        print("Contents of " .. path .. ":")
         for item in fs.list(path) do
           print("  " .. item)
         end
@@ -30,32 +67,30 @@ local commands = {
     end
     
     if not found then
-      print("ls: " .. path .. ": No such directory")
+      print("Not found: " .. path)
     end
   end
 }
 
--- Главный цикл
+-- Основной цикл
+print("OxygenOS Emergency Shell")
+print("Type 'help' for commands")
+
 while true do
-  io.write("$ ")
-  local input = io.read()
+  print("> ")
+  local input = read()
   
-  if not input then
-    print("EOF - exiting")
-    break
-  end
-  
-  -- Простейший парсинг
-  local cmd = input:match("^%s*(%S+)")
-  local arg = input:match("^%s*%S+%s+(.+)$")
-  
-  if cmd and commands[cmd] then
-    local ok, err = pcall(commands[cmd], arg)
-    if not ok then
-      print("Error: " .. tostring(err))
+  if input then
+    local cmd = input:match("^%s*(%S+)")
+    local arg = input:match("^%s*%S+%s+(.+)$")
+    
+    if cmd and commands[cmd] then
+      local success, err = pcall(commands[cmd], arg)
+      if not success then
+        print("Error: " .. tostring(err))
+      end
+    elseif cmd then
+      print("Unknown command: " .. cmd)
     end
-  elseif cmd then
-    print("Unknown command: " .. cmd)
-    print("Type 'help' for available commands")
   end
 end

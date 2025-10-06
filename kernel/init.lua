@@ -1,103 +1,104 @@
--- kernel/init.lua
--- OxygenOS v0.1 — оптимизированная для малой памяти
+-- kernel/init.lua для EEPROM
+-- OxygenOS v0.1 - BIOS-совместимая версия
 
--- Минимальный print для экономии памяти
-local function print(...)
-  local args = {...}
-  for i = 1, #args do
-    io.write(tostring(args[i]))
-    if i < #args then io.write("\t") end
-  end
-  io.write("\n")
-end
-
--- Базовая проверка компонентов
-if not component or not component.list then
-  print("OxygenOS requires OpenComputers!")
+-- === Базовые проверки в EEPROM ===
+if not component or not computer then
+  -- В EEPROM нет стандартного print, используем прямой вывод
+  computer.beep(1000, 0.5)  -- Сигнал ошибки
   return
 end
 
-print("OxygenOS v0.1")
-print("Booting...")
-
--- Поиск файловой системы с shell
-local function findShell()
-  for addr in component.list("filesystem") do
-    local fs = component.proxy(addr)
-    if fs.exists("/bin/shell") then
-      return fs, "/bin/shell"
+-- === Минимальный вывод для EEPROM ===
+local function debugPrint(message)
+  -- Пытаемся найти экран и вывести текст
+  for addr in component.list("screen") do
+    local screen = component.proxy(addr)
+    local gpu = screen.getGPU()
+    if gpu then
+      gpu.set(1, 1, tostring(message))
+      return
     end
   end
+  
+  -- Если экрана нет, используем компьютерный спикер для сигнала
+  computer.beep(500, 0.1)
+end
+
+debugPrint("OxygenOS Booting...")
+
+-- === Поиск и загрузка shell ===
+local function findAndLoadShell()
+  -- Ищем файловую систему с shell
+  for fsAddr in component.list("filesystem") do
+    local fs = component.proxy(fsAddr)
+    
+    -- Проверяем разные возможные пути
+    local shellPaths = {
+      "/bin/shell",
+      "bin/shell", 
+      "/shell",
+      "shell"
+    }
+    
+    for _, path in ipairs(shellPaths) do
+      if fs.exists(path) and not fs.isDirectory(path) then
+        debugPrint("Found: " .. path)
+        
+        -- Читаем файл shell
+        local handle = fs.open(path, "r")
+        if not handle then
+          debugPrint("Cannot open: " .. path)
+          return nil
+        end
+        
+        local content = ""
+        while true do
+          local chunk = fs.read(handle, 1024)
+          if not chunk then break end
+          content = content .. chunk
+        end
+        fs.close(handle)
+        
+        if content and content ~= "" then
+          return load(content, "=shell")
+        end
+      end
+    end
+  end
+  
   return nil
 end
 
-local fs, shellPath = findShell()
-if not fs then
-  print("ERROR: Shell not found!")
-  print("Check /bin/shell on any disk")
-  return
-end
-
--- Минимальная загрузка shell
-local function loadShell()
-  local handle = fs.open(shellPath, "r")
-  if not handle then
-    print("ERROR: Cannot open shell")
-    return nil
-  end
+-- === Основная процедура загрузки ===
+local function main()
+  -- Ждем инициализации компонентов
+  computer.pullSignal(0.5)
   
-  local content = ""
-  while true do
-    local chunk = fs.read(handle, 1024)
-    if not chunk then break end
-    content = content .. chunk
-  end
-  fs.close(handle)
-  
-  if content == "" then
-    print("ERROR: Shell is empty")
-    return nil
-  end
-  
-  return load(content, "=shell")
-end
-
--- Освобождаем память перед загрузкой shell
-collectgarbage()
-
-local shell, err = loadShell()
-if not shell then
-  print("SHELL ERROR: " .. tostring(err))
-  print("Emergency mode:")
-  
-  -- Ультра-легковесный аварийный режим
-  while true do
-    io.write("> ")
-    local cmd = io.read()
-    if not cmd then break end
+  -- Ищем и загружаем shell
+  local shell, err = findAndLoadShell()
+  if not shell then
+    debugPrint("Shell not found: " .. tostring(err))
     
-    if cmd == "reboot" then
-      computer.shutdown(true)
-    elseif cmd == "exit" then
-      break
-    elseif cmd == "ls" then
-      for addr in component.list("filesystem") do
-        local fs = component.proxy(addr)
-        print("FS:", addr)
-        for item in fs.list("/") do
-          print("  " .. item)
-        end
-      end
-    else
-      print("Commands: ls, reboot, exit")
+    -- Аварийный режим
+    while true do
+      computer.pullSignal()
+      -- Можно добавить базовое взаимодействие через клавиатуру
     end
   end
-  return
+  
+  -- Запускаем shell
+  local success, shellErr = pcall(shell)
+  if not success then
+    debugPrint("Shell crashed: " .. tostring(shellErr))
+  end
+  
+  -- Если shell завершился, перезагружаемся
+  computer.shutdown(true)
 end
 
--- Запуск shell с защитой
-local ok, err = pcall(shell)
+-- Запускаем систему
+local ok, err = pcall(main)
 if not ok then
-  print("SHELL CRASH: " .. tostring(err))
+  debugPrint("Boot failed: " .. tostring(err))
   computer.shutdown(true)
 end
