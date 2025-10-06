@@ -1,9 +1,82 @@
--- OxygenOS Installer v1.0 с выбором диска
+-- OxygenOS Network Installer v2.0
 local component = require("component")
 local computer = require("computer")
 local term = require("term")
 
-print("=== OxygenOS Installer ===")
+-- Конфигурация
+local REPO_BASE = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test"
+local FILES = {
+  "/kernel/init.lua",
+  "/kernel/bin/shell"
+}
+
+print("=== OxygenOS Network Installer ===")
+print("Downloading from GitHub...")
+
+-- Проверка интернет-карты
+if not component.isAvailable("internet") then
+  print("ERROR: Internet card required!")
+  return
+end
+
+local internet = component.internet
+
+-- Функция для скачивания файла
+local function downloadFile(url, path, fs)
+  print("Downloading: " .. path)
+  
+  local handle, reason = internet.request(url)
+  if not handle then
+    error("HTTP error: " .. tostring(reason))
+  end
+
+  -- Создаем директорию если нужно
+  local dir = path:match("(.*)/")
+  if dir and not fs.exists(dir) then
+    fs.makeDirectory(dir)
+  end
+
+  local fileHandle = fs.open(path, "w")
+  if not fileHandle then
+    error("Cannot create: " .. path)
+  end
+
+  local content = ""
+  while true do
+    local chunk, reason = handle.read(1024)
+    if chunk then
+      content = content .. chunk
+    else
+      if reason then
+        error("Download failed: " .. tostring(reason))
+      end
+      break
+    end
+  end
+
+  fs.write(fileHandle, content)
+  fs.close(fileHandle)
+  handle.close()
+  print("✓ " .. path)
+end
+
+-- Проверка доступности GitHub
+local function testGitHubConnection()
+  print("Testing connection to GitHub...")
+  local handle, reason = internet.request(REPO_BASE .. FILES[1])
+  if not handle then
+    error("Cannot connect to GitHub: " .. tostring(reason))
+  end
+  
+  local testData = handle.read(1024)
+  handle.close()
+  
+  if not testData then
+    error("GitHub returned empty response")
+  end
+  
+  print("✓ Connection successful")
+end
 
 -- Получить список всех подходящих дисков
 local function getAvailableDisks()
@@ -12,12 +85,16 @@ local function getAvailableDisks()
   for addr in component.list("filesystem") do
     local fs = component.proxy(addr)
     if not fs.isReadOnly() and fs.spaceTotal() > 100000 then
+      local total = fs.spaceTotal()
+      local used = fs.spaceUsed()
+      local free = total - used
+      
       table.insert(disks, {
         address = addr,
         fs = fs,
         label = fs.getLabel() or "No Label",
-        size = math.floor(fs.spaceTotal() / 1024) .. " KB",
-        free = math.floor((fs.spaceTotal() - fs.spaceUsed()) / 1024) .. " KB"
+        size = math.floor(total / 1024) .. " KB",
+        free = math.floor(free / 1024) .. " KB"
       })
     end
   end
@@ -66,6 +143,7 @@ local function confirmInstallation(disk)
   print("Disk: " .. disk.address)
   print("Label: " .. disk.label)
   print("Size: " .. disk.size)
+  print("Source: GitHub Repository")
   print("WARNING: All data on this disk will be erased!")
   
   while true do
@@ -83,55 +161,30 @@ local function confirmInstallation(disk)
 end
 
 -- Создать структуру каталогов
-local function createDirectoryStructure(hdd)
+local function createDirectoryStructure(fs)
   local dirs = {"/bin", "/etc", "/home", "/tmp", "/var", "/usr"}
   
   print("Creating directory structure...")
   for _, dir in ipairs(dirs) do
-    if not hdd.exists(dir) then
-      hdd.makeDirectory(dir)
+    if not fs.exists(dir) then
+      fs.makeDirectory(dir)
     end
   end
-end
-
--- Копировать файлы с текущего носителя
-local function copyFile(sourceFs, sourcePath, destFs, destPath)
-  if not sourceFs.exists(sourcePath) then
-    error("Source file not found: " .. sourcePath)
-  end
-  
-  print("Copying: " .. sourcePath .. " -> " .. destPath)
-  
-  local sourceHandle = sourceFs.open(sourcePath, "r")
-  local destHandle = destFs.open(destPath, "w")
-  
-  if not sourceHandle or not destHandle then
-    error("Cannot open files for copying: " .. sourcePath .. " -> " .. destPath)
-  end
-  
-  while true do
-    local chunk = sourceFs.read(sourceHandle, 1024)
-    if not chunk then break end
-    destFs.write(destHandle, chunk)
-  end
-  
-  sourceFs.close(sourceHandle)
-  destFs.close(destHandle)
-end
-
--- Найти файловую систему установщика (текущую)
-local function findInstallerFs()
-  for addr in component.list("filesystem") do
-    local fs = component.proxy(addr)
-    if fs.exists("install.lua") then
-      return fs
-    end
-  end
-  return nil
 end
 
 -- Основная функция установки
 local function install()
+  -- Проверка соединения с GitHub
+  local ok, err = pcall(testGitHubConnection)
+  if not ok then
+    print("Network error: " .. tostring(err))
+    print("Please check:")
+    print("  - Internet card is installed")
+    print("  - GitHub is not blocked")
+    print("  - Network connection is available")
+    return
+  end
+  
   -- Получить список дисков
   local disks = getAvailableDisks()
   
@@ -147,39 +200,49 @@ local function install()
     return
   end
   
-  -- Найти установочные файлы
-  local installerFs = findInstallerFs()
-  if not installerFs then
-    print("ERROR: Cannot find installer files!")
-    return
-  end
-  
   -- Начать установку
   print("\nStarting installation...")
   
   -- Создать структуру каталогов
   createDirectoryStructure(selectedDisk.fs)
   
-  -- Скопировать файлы
-  copyFile(installerFs, "kernel/init.lua", selectedDisk.fs, "/init.lua")
-  copyFile(installerFs, "kernel/bin/shell", selectedDisk.fs, "/bin/shell")
+  -- Скачать все файлы
+  print("\nDownloading OxygenOS files...")
+  for _, file in ipairs(FILES) do
+    local ok, err = pcall(downloadFile, REPO_BASE .. file, file, selectedDisk.fs)
+    if not ok then
+      print("✗ Failed to download: " .. file)
+      print("Error: " .. tostring(err))
+      return
+    end
+  end
   
   -- Установить метку
   selectedDisk.fs.setLabel("OXYGEN")
   
   -- Завершение
-  print("\n=== Installation complete! ===")
+  print("\n" .. string.rep("=", 40))
+  print("=== Installation complete! ===")
+  print(string.rep("=", 40))
   print("Disk: " .. selectedDisk.address)
   print("Label: " .. selectedDisk.fs.getLabel())
   print("\nTo boot OxygenOS:")
-  print("1. Reboot computer")
+  print("1. Reboot computer (type 'reboot')")
   print("2. In BIOS: Set this disk as boot device")
   print("3. Save and exit BIOS")
+  print("\nReboot now? (y/N): ")
+  
+  local input = io.read():lower()
+  if input == "y" or input == "yes" then
+    computer.shutdown(true)
+  end
 end
 
 -- Запустить установку
+print("OxygenOS Network Installer ready")
+print("Repository: " .. REPO_BASE)
 local success, err = pcall(install)
 if not success then
-  print("INSTALLATION FAILED: " .. tostring(err))
+  print("\nINSTALLATION FAILED: " .. tostring(err))
   print("Please check your setup and try again.")
 end
