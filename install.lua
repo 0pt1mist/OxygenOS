@@ -1,74 +1,79 @@
--- OxygenOS Installer v0.9
-
+-- OxygenOS Installer v0.9.1
 local component = require("component")
 local computer = require("computer")
 
-local function getComponent(name)
-  local addr = component.list(name)()
-  if not addr then error("Required " .. name .. " missing!", 0) end
-  return addr
+print("OxygenOS Installer")
+
+-- Найти HDD для установки
+local function findHDD()
+  for addr in component.list("filesystem") do
+    local fs = component.proxy(addr)
+    if not fs.isReadOnly() and fs.spaceTotal() > 100000 then
+      return fs, addr
+    end
+  end
+  return nil
 end
 
-local internetAddr = getComponent("internet")
-local hddAddr = nil
+local hdd, hddAddr = findHDD()
+if not hdd then
+  print("No suitable HDD found! Need writable disk with >100KB space")
+  return
+end
 
+print("Installing to: " .. hddAddr)
+
+-- Создать структуру каталогов
+local dirs = {"/bin", "/etc", "/home", "/tmp", "/var"}
+for _, dir in ipairs(dirs) do
+  if not hdd.exists(dir) then
+    hdd.makeDirectory(dir)
+  end
+end
+
+-- Копировать файлы с текущего носителя
+local function copyFile(sourceFs, sourcePath, destFs, destPath)
+  if not sourceFs.exists(sourcePath) then
+    error("Source file not found: " .. sourcePath)
+  end
+  
+  local sourceHandle = sourceFs.open(sourcePath, "r")
+  local destHandle = destFs.open(destPath, "w")
+  
+  if not sourceHandle or not destHandle then
+    error("Cannot open files for copying: " .. sourcePath .. " -> " .. destPath)
+  end
+  
+  while true do
+    local chunk = sourceFs.read(sourceHandle, 1024)
+    if not chunk then break end
+    destFs.write(destHandle, chunk)
+  end
+  
+  sourceFs.close(sourceHandle)
+  destFs.close(destHandle)
+end
+
+-- Найти файловую систему установщика (текущую)
+local installerFs
 for addr in component.list("filesystem") do
   local fs = component.proxy(addr)
-  if fs.spaceTotal() and fs.spaceTotal() > 1024 * 1024 then
-    hddAddr = addr
+  if fs.exists("install.lua") then
+    installerFs = fs
     break
   end
 end
 
-if not hddAddr then
-  error("No suitable HDD found (need >1 MB)!", 0)
+if not installerFs then
+  print("Cannot find installer filesystem!")
+  return
 end
 
-local hdd = component.proxy(hddAddr)
-
-if not hdd.getLabel() then
-  error("Disk not formatted! Format in BIOS (press F).", 0)
-end
-
-local function downloadFile(url, path)
-  print("Downloading: " .. path)
-  local handle, err = component.invoke(internetAddr, "request", url)
-  if not handle then
-    error("HTTP error: " .. tostring(err))
-  end
-
-  local fileHandle = hdd.open(path, "wb")
-  if not fileHandle then
-    error("Cannot create " .. path)
-  end
-
-  while true do
-    local chunk, reason = handle.read(65536)
-    if chunk then
-      hdd.write(fileHandle, chunk)
-    else
-      if reason then
-        error("Download failed: " .. tostring(reason))
-      end
-      break
-    end
-  end
-
-  hdd.close(fileHandle)
-  handle.close()
-  print("Done")
-end
+-- Установить файлы
+print("Installing kernel...")
+copyFile(installerFs, "kernel/init.lua", hdd, "/init.lua")
+copyFile(installerFs, "kernel/bin/shell", hdd, "/bin/shell")
 
 hdd.setLabel("OXYGEN")
-
-local dirs = {"/bin", "/etc", "/usr"}
-for _, d in ipairs(dirs) do
-  if not hdd.exists(d) then hdd.makeDirectory(d) end
-end
-
-local BASE = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/main"
-downloadFile(BASE .. "/kernel/init.lua", "/init.lua")
-downloadFile(BASE .. "/kernel/bin/shell", "/bin/shell")
-
-print("OxygenOS installed!")
-print("Reboot to start.")
+print("Installation complete!")
+print("Set this disk as boot device and reboot")

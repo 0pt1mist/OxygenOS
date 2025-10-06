@@ -1,83 +1,103 @@
 -- kernel/init.lua
--- OxygenOS v0.1 — BIOS-compatible, no OpenOS dependency
+-- OxygenOS v0.1 — оптимизированная для малой памяти
 
--- === Безопасный print ===
-local function safePrint(...)
-  if type(print) == "function" then
-    print(...)
-  else
-    local args = {...}
-    for i = 1, #args do
-      io.write(tostring(args[i]) .. "\t")
-    end
-    io.write("\n")
+-- Минимальный print для экономии памяти
+local function print(...)
+  local args = {...}
+  for i = 1, #args do
+    io.write(tostring(args[i]))
+    if i < #args then io.write("\t") end
   end
+  io.write("\n")
 end
 
-if not print then
-  print = safePrint
-end
-
--- === Проверка: запущено в OpenComputers? ===
+-- Базовая проверка компонентов
 if not component or not component.list then
-  safePrint("OxygenOS requires OpenComputers!")
+  print("OxygenOS requires OpenComputers!")
   return
 end
 
-safePrint("🌬️  OxygenOS v0.1")
-safePrint("Unix-like OS for OpenComputers 1.12.2")
-safePrint("")
+print("OxygenOS v0.1")
+print("Booting...")
 
--- === Проверка: существует ли /bin/shell? ===
-local shellPath = "/bin/shell"
-local file = io.open(shellPath, "r")
-if not file then
-  safePrint("ERROR: Shell not found! Corrupted installation.")
-  safePrint("Expected: /bin/shell on boot disk.")
-  return
-end
-file:close()
-
--- === Загрузка и запуск shell ===
-local content = ""
-local f = io.open(shellPath, "r")
-if f then
-  content = f:read("*a")
-  f:close()
+-- Поиск файловой системы с shell
+local function findShell()
+  for addr in component.list("filesystem") do
+    local fs = component.proxy(addr)
+    if fs.exists("/bin/shell") then
+      return fs, "/bin/shell"
+    end
+  end
+  return nil
 end
 
-if content == "" then
-  safePrint("ERROR: Shell is empty!")
+local fs, shellPath = findShell()
+if not fs then
+  print("ERROR: Shell not found!")
+  print("Check /bin/shell on any disk")
   return
 end
 
-local fn, err = load(content, "@shell", "t", {})
-if not fn then
-  safePrint("SHELL LOAD ERROR: " .. tostring(err))
-  return
-end
-
--- Запуск
-local success, err = pcall(fn)
-if not success then
-  safePrint("SHELL CRASHED: " .. tostring(err))
-  safePrint("EMERGENCY MODE")
-
+-- Минимальная загрузка shell
+local function loadShell()
+  local handle = fs.open(shellPath, "r")
+  if not handle then
+    print("ERROR: Cannot open shell")
+    return nil
+  end
+  
+  local content = ""
   while true do
-    io.write("# ")
+    local chunk = fs.read(handle, 1024)
+    if not chunk then break end
+    content = content .. chunk
+  end
+  fs.close(handle)
+  
+  if content == "" then
+    print("ERROR: Shell is empty")
+    return nil
+  end
+  
+  return load(content, "=shell")
+end
+
+-- Освобождаем память перед загрузкой shell
+collectgarbage()
+
+local shell, err = loadShell()
+if not shell then
+  print("SHELL ERROR: " .. tostring(err))
+  print("Emergency mode:")
+  
+  -- Ультра-легковесный аварийный режим
+  while true do
+    io.write("> ")
     local cmd = io.read()
+    if not cmd then break end
+    
     if cmd == "reboot" then
-      os.exit()
+      computer.shutdown(true)
+    elseif cmd == "exit" then
+      break
     elseif cmd == "ls" then
-      local fsys = component.list("filesystem")()
-      if fsys then
-        local proxy = component.proxy(fsys)
-        for item in proxy.list("/") do
-          safePrint(item)
+      for addr in component.list("filesystem") do
+        local fs = component.proxy(addr)
+        print("FS:", addr)
+        for item in fs.list("/") do
+          print("  " .. item)
         end
       end
     else
-      safePrint("Unknown command")
+      print("Commands: ls, reboot, exit")
     end
   end
+  return
+end
+
+-- Запуск shell с защитой
+local ok, err = pcall(shell)
+if not ok then
+  print("SHELL CRASH: " .. tostring(err))
+  computer.shutdown(true)
 end

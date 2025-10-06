@@ -1,37 +1,61 @@
 -- kernel/bin/shell
-local fs = require("filesystem")
+-- Ultra-light shell for low memory
 
-local function cmd_ls(args)
-  local path = args[1] or "/"
-  if not fs.exists(path) then
-    print("ls: cannot access '" .. path .. "': No such file or directory")
-    return
-  end
-  for item in fs.list(path) do
-    print(item)
-  end
-end
-
-while true do
-  io.write("oxygen# ")
-  local input = io.read()
-  if not input then break end
-
-  local words = {}
-  for word in input:gmatch("%S+") do
-    table.insert(words, word)
-  end
-
-  if #words == 0 then
-    -- nothing brother
-  elseif words[1] == "exit" then
+-- Базовые команды без лишних зависимостей
+local commands = {
+  help = function()
+    print("OxygenOS Shell v0.1")
+    print("Commands: ls, exit, help")
+  end,
+  
+  exit = function()
     print("Shutting down...")
     os.exit()
-  elseif words[1] == "ls" then
-    cmd_ls({select(2, table.unpack(words))})
-  elseif words[1] == "help" then
-    print("Available commands: ls, help, exit")
-  else
-    print("oxygen: " .. words[1] .. ": command not found")
+  end,
+  
+  ls = function(path)
+    path = path or "/"
+    local found = false
+    
+    for addr in component.list("filesystem") do
+      local fs = component.proxy(addr)
+      if fs.exists(path) then
+        found = true
+        print("Directory: " .. path)
+        for item in fs.list(path) do
+          print("  " .. item)
+        end
+        break
+      end
+    end
+    
+    if not found then
+      print("ls: " .. path .. ": No such directory")
+    end
+  end
+}
+
+-- Главный цикл
+while true do
+  io.write("$ ")
+  local input = io.read()
+  
+  if not input then
+    print("EOF - exiting")
+    break
+  end
+  
+  -- Простейший парсинг
+  local cmd = input:match("^%s*(%S+)")
+  local arg = input:match("^%s*%S+%s+(.+)$")
+  
+  if cmd and commands[cmd] then
+    local ok, err = pcall(commands[cmd], arg)
+    if not ok then
+      print("Error: " .. tostring(err))
+    end
+  elseif cmd then
+    print("Unknown command: " .. cmd)
+    print("Type 'help' for available commands")
   end
 end
