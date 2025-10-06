@@ -2,23 +2,30 @@
 local function print(...)
   local args = {...}
   local message = ""
+  
   for i, arg in ipairs(args) do
     if i > 1 then message = message .. " " end
     message = message .. tostring(arg)
   end
   
-  if component then
-    local gpu = component.gpu
-    if gpu then
-      if not gpu.getScreen() then
-        for screenAddr in component.list("screen") do
-          gpu.bind(screenAddr)
-          break
-        end
-      end
-      gpu.set(1, 1, message)
-      return
+  -- Работаем с GPU напрямую
+  local gpu = component.gpu
+  if not gpu then
+    for addr in component.list("gpu") do
+      gpu = component.proxy(addr)
+      break
     end
+  end
+  
+  if gpu then
+    -- Привязываемся к экрану если нужно
+    if not gpu.getScreen() then
+      for screenAddr in component.list("screen") do
+        gpu.bind(screenAddr)
+        break
+      end
+    end
+    gpu.set(1, 1, message)
   end
 end
 
@@ -38,8 +45,14 @@ local function read()
 end
 
 local commands = {
-  help = function() print("help, reboot, ls") end,
-  reboot = function() computer.shutdown(true) end,
+  help = function()
+    print("Commands: help, reboot, ls")
+  end,
+  
+  reboot = function()
+    computer.shutdown(true)
+  end,
+  
   ls = function(path)
     path = path or "/"
     for addr in component.list("filesystem") do
@@ -67,7 +80,9 @@ while true do
     
     if cmd and commands[cmd] then
       local success, err = pcall(commands[cmd], arg)
-      if not success then print("Error: " .. tostring(err)) end
+      if not success then
+        print("Error: " .. tostring(err))
+      end
     elseif cmd then
       print("Unknown: " .. cmd)
     end
