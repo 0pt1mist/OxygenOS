@@ -1,4 +1,4 @@
--- ВАЖНО: Убедись, что ссылка верная
+-- Portage v1.0.2 (Fix: Syntax Error in Sync)
 local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
 local DB_PATH = "/etc/oxygen/packages.db"
 
@@ -13,6 +13,7 @@ local target = args[2]
 local function loadDB()
   local data = sys.read(DB_PATH)
   if not data then return {} end
+  -- Локальная БД хранится просто как таблица "{...}", поэтому тут нужен return
   local f = load("return " .. data)
   if f then return f() else return {} end
 end
@@ -35,18 +36,20 @@ if action == "sync" then
   local index, err = sys.fetch(REPO_URL .. "packages.index")
   
   if index and #index > 0 then
-    -- Пробуем распарсить, чтобы убедиться что это не 404 страница текстом
-    local func, loadErr = load("return " .. index)
+    local func, loadErr = load(index)
+    
     if not func then
-      print("Error: Index invalid (is it 404 page?).")
-      print(index) -- Выведет HTML если там ошибка
+      print("Error: Invalid Index Syntax.")
+      print("Lua Error: " .. tostring(loadErr))
+      print("--- Content Start ---")
+      print(string.sub(index, 1, 100)) -- Показать начало файла для отладки
     else
       sys.mkdir("/var")
       sys.write("/var/packages.index", index)
       print("Sync complete.")
     end
   else
-    print("Error: Fetch returned nil/empty.")
+    print("Error: Fetch failed.")
     if err then print("Reason: " .. tostring(err)) end
   end
 
@@ -54,7 +57,10 @@ elseif action == "list" then
   local index_raw = sys.read("/var/packages.index")
   if not index_raw then print("Error: No index. Run 'emerge sync'") return end
   
-  local index = load("return " .. index_raw)()
+  local func = load(index_raw)
+  if not func then print("Error: Corrupted index file.") return end
+  local index = func()
+  
   local db = loadDB()
   
   print("Package List:")
@@ -70,7 +76,7 @@ elseif action == "install" then
   
   local index_raw = sys.read("/var/packages.index")
   if not index_raw then print("Error: No index.") return end
-  local index = load("return " .. index_raw)()
+  local index = load(index_raw)()
   
   local pkg_data = nil
   for cat, pkgs in pairs(index) do
@@ -82,15 +88,22 @@ elseif action == "install" then
   print("Downloading " .. target .. "...")
   local content, err = sys.fetch(REPO_URL .. pkg_data.path)
   
-  if content then
+  if content and #content > 0 then
+    -- Проверка на 404 (на случай если файл пакета забыли залить)
+    if string.sub(content, 1, 10) == "404: Not F" then
+       print("Error: 404 Not Found on server.")
+       return
+    end
+
     print("Installing to " .. pkg_data.dest)
     sys.write(pkg_data.dest, content)
     local db = loadDB()
     db[target] = pkg_data.version
     saveDB(db)
-    print("Done.")
+    print("Successfully installed " .. target)
   else
-    print("Download failed: " .. tostring(err))
+    print("Download failed.")
+    if err then print("Reason: " .. tostring(err)) end
   end
 
 else

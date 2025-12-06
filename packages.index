@@ -1,6 +1,6 @@
 return {
   core = {
-    kernel = { version = "0.6.0", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
+    kernel = { version = "0.6.1", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
     shell  = { version = "1.2.0", path = "bin/sh.lua",      dest = "/bin/sh.lua" },
     emerge = { version = "1.0.1", path = "bin/emerge",      dest = "/bin/emerge" }
   },
