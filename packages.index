@@ -1,10 +1,10 @@
 return {
   core = {
-    kernel = { version = "0.4.0", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
-    shell  = { version = "1.1.0", path = "bin/sh.lua",      dest = "/bin/sh.lua" },
-    emerge = { version = "1.0.0", path = "bin/emerge.lua",  dest = "/bin/emerge" }
+    kernel = { version = "0.6.0", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
+    shell  = { version = "1.2.0", path = "bin/sh.lua",      dest = "/bin/sh.lua" },
+    emerge = { version = "1.0.1", path = "bin/emerge",      dest = "/bin/emerge" }
   },
   apps = {
-    editor = { version = "0.1", path = "apps/edit.lua", dest = "/bin/edit" }
+    nano = { version = "1.0.0", path = "bin/nano.lua", dest = "/bin/nano" }
   }
 }

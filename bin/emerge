@@ -2,7 +2,7 @@
 -- Args: строка "install pkg" или "sync"
 
 local args_raw = ... -- Получаем аргументы от spawn
-local REPO_URL = "https://raw.githubusercontent.com/USERNAME/OxygenOS/test/"
+local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
 local DB_PATH = "/etc/oxygen/packages.db"
 
 -- Парсинг аргументов
