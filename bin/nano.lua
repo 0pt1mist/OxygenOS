@@ -144,7 +144,6 @@ while true do
       local len = unicode.len(lines[scrollY + cursorY] or "")
       if cursorX <= len then cursorX = cursorX + 1 end
       
-    -- Printable chars
     elseif char >= 32 then
       local uchar = unicode.char(char)
       local line = lines[scrollY + cursorY] or ""
