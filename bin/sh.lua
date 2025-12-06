@@ -1,12 +1,12 @@
--- Oxygen Shell v2.0 (Path & CD Support)
-local args = {...}
+-- Oxygen Shell v2.1
+-- Features: Path resolution, CD, Auto-bin search, Stable LS
 
--- [1] STATE
+local args = {...}
 local current_dir = "/"
 
--- [2] HELPERS
+-- [1] ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 
--- Функция очистки пути (превращает /foo/bar/../baz в /foo/baz)
+-- Превращает относительные пути (test, ../bin) в абсолютные (/home/test, /bin)
 local function resolvePath(path)
   -- Если путь не начинается с /, добавляем текущую директорию
   if string.sub(path, 1, 1) ~= "/" then
@@ -30,35 +30,38 @@ local function resolvePath(path)
   return res
 end
 
--- Функция проверки существования файла/папки
+-- Проверка типа объекта (файл или папка)
 local function exists(path)
-  -- Используем ls для проверки. Если ls возвращает таблицу - папка.
-  -- Если возвращает строку (или поведение sys.ls) - файл.
-  -- В нашем ядре ls возвращает итератор или список.
-  -- Проще всего попробовать прочитать (cat) или листнуть.
-  -- В Kernel v0.6+ sys.ls возвращает итератор.
+  -- Пробуем получить список файлов (значит папка)
   local list = ls(path)
   if list then return "dir" end
   
+  -- Пробуем прочитать (значит файл)
   local content = cat(path)
   if content then return "file" end
   
   return nil
 end
 
--- [3] MAIN LOOP
-print("OxygenOS Shell v2.0")
+-- [2] ГЛАВНЫЙ ЦИКЛ
+print("OxygenOS Shell v2.1")
+print("Welcome " .. (os.getenv("USER") or "root"))
 
 while true do
-  -- Красивый промпт: /home/user #
-  sys.gpu.color(0x00FF00, 0x000000) -- Зеленый текст
-  sys.gpu.set(1, sys.gpu.res(), current_dir .. " # ")
-  sys.gpu.color(0xFFFFFF, 0x000000) -- Белый текст
+  -- Отрисовка красивого промпта (Зеленый путь # Белый текст)
+  if sys and sys.gpu then
+    sys.gpu.color(0x00FF00, 0x000000) -- Зеленый
+    sys.gpu.set(1, sys.gpu.res(), current_dir .. " # ")
+    sys.gpu.color(0xFFFFFF, 0x000000) -- Белый
+  else
+    -- Фолбэк если драйвера GPU нет (на всякий случай)
+    print(current_dir .. " # ")
+  end
   
-  -- Ввод с учетом длины промпта (простой костыль с пробелами)
-  -- В идеале readln должен принимать prompt аргументом, но пока так:
+  -- Ожидание ввода
   local input = readln()
   
+  -- Разбиваем ввод на слова
   local parts = {}
   for w in string.gmatch(input, "%S+") do table.insert(parts, w) end
   
@@ -66,14 +69,14 @@ while true do
     local cmd = parts[1]
     local arg1 = parts[2]
     
-    -- === BUILT-IN COMMANDS ===
+    -- === ВСТРОЕННЫЕ КОМАНДЫ ===
     
     if cmd == "exit" then
       exit()
       
     elseif cmd == "cd" then
       if not arg1 then
-        current_dir = "/" -- cd без аргументов кидает в корень
+        current_dir = "/" -- cd без аргументов -> в корень
       else
         local new_path = resolvePath(arg1)
         if exists(new_path) == "dir" then
@@ -87,7 +90,7 @@ while true do
       print(current_dir)
       
     elseif cmd == "ls" then
-      -- Если аргумент дан, резолвим его. Если нет - текущая папка.
+      -- Если аргумент дан, смотрим ту папку, иначе текущую
       local target = current_dir
       if arg1 then target = resolvePath(arg1) end
       
@@ -95,9 +98,11 @@ while true do
       if l then
         local output = ""
         local count = 0
-        for file in l do
+        -- ИСПРАВЛЕНИЕ: Используем pairs для обхода таблицы
+        for _, file in pairs(l) do
            output = output .. file .. "  "
            count = count + 1
+           -- Перенос строки каждые 4 файла
            if count % 4 == 0 then output = output .. "\n" end
         end
         print(output)
@@ -106,7 +111,9 @@ while true do
       end
       
     elseif cmd == "cat" then
-      if not arg1 then print("Usage: cat <file>") else
+      if not arg1 then 
+        print("Usage: cat <file>") 
+      else
         local target = resolvePath(arg1)
         local data = cat(target)
         if data then print(data) else print("cat: file not found") end
@@ -114,41 +121,35 @@ while true do
 
     elseif cmd == "help" then
       print("Builtins: cd, pwd, ls, cat, exit")
-      print("Binaries: nano, emerge, etc.")
+      print("System:   emerge, nano")
       
     else
-      -- === EXTERNAL BINARIES ===
-      -- Логика поиска программ:
-      -- 1. Сначала ищем в текущей папке (если путь явный ./...)
-      -- 2. Ищем в /bin
-      -- 3. Ищем по абсолютному пути
+      -- === ЗАПУСК ПРОГРАММ ===
       
       local run_path = nil
       local abs_test = resolvePath(cmd)
       local bin_test = resolvePath("/bin/" .. cmd)
       
-      -- Пробуем /bin/имя
+      -- 1. Ищем в /bin/ (чтобы работало 'nano' вместо '/bin/nano')
       if exists(bin_test) == "file" then
         run_path = bin_test
-      -- Пробуем текущую директорию/абсолютный путь
+      -- 2. Ищем по указанному пути (или в текущей папке)
       elseif exists(abs_test) == "file" then
         run_path = abs_test
       end
       
       if run_path then
-        -- Собираем аргументы в строку
+        -- Собираем аргументы для программы
         local args_to_pass = ""
         if #parts > 1 then
-           args_to_pass = table.concat(parts, " ", 2)
-        end
-        
-        -- ВАЖНО: Мы передаем полный путь к файлу.
-        -- Но сами программы (типа nano) могут получать относительные пути в аргументах.
-        -- Нам нужно либо учить программы понимать relative path, 
-        -- либо (лучше) резолвить аргументы здесь, если они похожи на пути.
-        -- ДЛЯ NANO:
-        if cmd == "nano" and arg1 then
+           -- Если это nano, нам нужно превратить имя файла в полный путь,
+           -- так как nano не знает про current_dir шелла
+           if cmd == "nano" or cmd == "edit" then
              args_to_pass = resolvePath(arg1)
+           else
+             -- Для остальных программ передаем аргументы как есть
+             args_to_pass = table.concat(parts, " ", 2)
+           end
         end
         
         spawn(run_path, args_to_pass)
