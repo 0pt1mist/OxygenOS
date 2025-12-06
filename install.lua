@@ -1,20 +1,12 @@
--- OxygenOS Installer v1.0 (GitHub Edition)
-local component = require("component")
-local internet = require("internet")
-local shell = require("shell")
-local fs = require("filesystem")
-local term = require("term")
-
--- КОНФИГУРАЦИЯ
+-- OxygenOS Installer v1.1
 local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
 
--- Список файлов для скачивания
--- { path = "куда сохранить на диске", remote = "путь в репозитории" }
 local file_list = {
   { path = "/init.lua",        remote = "boot/init.lua" },
   { path = "/boot/kernel.lua", remote = "boot/kernel.lua" },
   { path = "/bin/sh.lua",      remote = "bin/sh.lua" },
-  { path = "/bin/emerge",      remote = "bin/emerge" }
+  { path = "/bin/emerge",      remote = "bin/emerge" },
+  { path = "/bin/nano",        remote = "bin/nano" }
 }
 
 term.clear()
