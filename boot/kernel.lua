@@ -1,10 +1,11 @@
--- OxygenOS Kernel v0.6.2 (Net Debug)
+-- OxygenOS Kernel v0.7.0 (Security & Multi-user)
 
 -- [1] HARDWARE SEIZE
 local hw = {
   component = component,
   computer = computer,
-  unicode = unicode
+  unicode = unicode,
+  os_native = os -- Сохраняем нативные функции OS перед удалением
 }
 local boot_addr = hw.computer.getBootAddress()
 
@@ -13,15 +14,29 @@ _G.component = nil
 _G.computer = nil
 _G.io = nil
 _G.os = nil
+_G.print = nil
 
--- [3] DRIVERS
+-- [3] KERNEL STATE
 local Oxygen = {
   gpu = nil,
   inet = nil,
   w = 80, h = 25,
-  input_row = 25
+  input_row = 25,
+  
+  -- Security Context
+  current_uid = 0,     -- 0 = root
+  current_user = "root",
+  
+  -- Защищенные пути (только root может писать сюда)
+  protected_paths = {
+    ["/boot"] = true,
+    ["/bin"] = true,
+    ["/etc"] = true,
+    ["/lib"] = true
+  }
 }
 
+-- Hardware Init
 local gpu_addr = hw.component.list("gpu")()
 local screen_addr = hw.component.list("screen")()
 if gpu_addr and screen_addr then
@@ -37,40 +52,48 @@ end
 local inet_addr = hw.component.list("internet")()
 if inet_addr then Oxygen.inet = hw.component.proxy(inet_addr) end
 
--- [4] TTY ENGINE
-function Oxygen.scroll()
+-- [4] HELPER FUNCTIONS
+function Oxygen.printLine(line)
   if not Oxygen.gpu then return end
   Oxygen.gpu.copy(1, 2, Oxygen.w, Oxygen.input_row - 2, 0, -1)
   Oxygen.gpu.fill(1, Oxygen.input_row - 1, Oxygen.w, 1, " ")
-end
-
-function Oxygen.printLine(line)
-  if not Oxygen.gpu then return end
-  Oxygen.scroll()
   Oxygen.gpu.set(1, Oxygen.input_row - 1, tostring(line))
 end
 
 function Oxygen.ttyPrint(text)
-  if not text then text = "nil" end
   text = tostring(text)
   local line = ""
   for i = 1, #text do
     local char = string.sub(text, i, i)
     if char == "\n" then
-      Oxygen.printLine(line)
-      line = ""
+      Oxygen.printLine(line); line = ""
     else
       line = line .. char
-      if hw.unicode.len(line) >= Oxygen.w then
-        Oxygen.printLine(line)
-        line = ""
-      end
+      if hw.unicode.len(line) >= Oxygen.w then Oxygen.printLine(line); line = "" end
     end
   end
   if #line > 0 then Oxygen.printLine(line) end
 end
 
--- [5] SYSTEM CALLS
+-- [5] SECURITY CHECKS
+function Oxygen.canWrite(path)
+  if Oxygen.current_uid == 0 then return true end -- Root разрешено всё
+  
+  -- Проверка защищенных путей
+  for prot, _ in pairs(Oxygen.protected_paths) do
+    if string.sub(path, 1, #prot) == prot then
+      return false
+    end
+  end
+  return true
+end
+
+function Oxygen.canNet()
+  -- Пока разрешаем всем, в будущем можно ограничить
+  return true 
+end
+
+-- [6] SYSTEM CALLS
 local Syscalls = {}
 
 Syscalls.readFile = function(path)
@@ -86,6 +109,8 @@ Syscalls.readFile = function(path)
 end
 
 Syscalls.writeFile = function(path, data)
+  if not Oxygen.canWrite(path) then return false, "Permission Denied" end
+
   local handle = hw.component.invoke(boot_addr, "open", path, "w")
   if not handle then return false, "Write error" end
   hw.component.invoke(boot_addr, "write", handle, data)
@@ -93,66 +118,56 @@ Syscalls.writeFile = function(path, data)
   return true
 end
 
-Syscalls.list = function(path) return hw.component.invoke(boot_addr, "list", path) end
-Syscalls.mkDir = function(path) return hw.component.invoke(boot_addr, "makeDirectory", path) end
-
--- NETWORK DEBUGGED
-Syscalls.fetch = function(url)
-  if not Oxygen.inet then 
-    Oxygen.ttyPrint("[NET] Error: No Internet Card")
-    return nil, "No Net" 
-  end
-  
-  Oxygen.ttyPrint("[NET] GET " .. url)
-  
-  local handle, err = Oxygen.inet.request(url)
-  if not handle then 
-    Oxygen.ttyPrint("[NET] Connect Fail: " .. tostring(err))
-    return nil, err 
-  end
-  
-  local buffer = ""
-  -- Читаем статус ответа (не все версии OC поддерживают response code, но попробуем)
-  local code, msg, header = handle.response()
-  if code then
-     Oxygen.ttyPrint("[NET] Response: " .. tostring(code))
-     if code == 404 then
-        handle.close()
-        return nil, "404 Not Found"
-     end
-  end
-
-  while true do
-    local data = handle.read()
-    if not data then break end
-    buffer = buffer .. data
-    hw.computer.pullSignal(0.0) -- Антифриз
-  end
-  
-  handle.close()
-  Oxygen.ttyPrint("[NET] Done. Size: " .. #buffer .. " bytes")
-  return buffer
+Syscalls.mkDir = function(path) 
+  if not Oxygen.canWrite(path) then return false, "Permission Denied" end
+  return hw.component.invoke(boot_addr, "makeDirectory", path) 
 end
 
--- GPU & Input
+Syscalls.list = function(path) return hw.component.invoke(boot_addr, "list", path) end
+
+Syscalls.fetch = function(url)
+  if not Oxygen.canNet() then return nil, "Permission Denied" end
+  if not Oxygen.inet then return nil, "No Net" end
+  Oxygen.ttyPrint("[NET] GET " .. url)
+  local h, e = Oxygen.inet.request(url)
+  if not h then return nil, e end
+  local b = ""
+  while true do
+    local d = h.read()
+    if not d then break end
+    b = b .. d
+    hw.computer.pullSignal(0.0)
+  end
+  h.close()
+  return b
+end
+
+-- User Management Syscalls
+Syscalls.getuid = function() return Oxygen.current_uid end
+Syscalls.getuser = function() return Oxygen.current_user end
+Syscalls.setuid = function(uid, user)
+  if Oxygen.current_uid ~= 0 then return false, "EPERM: Root required" end
+  Oxygen.current_uid = uid
+  Oxygen.current_user = user
+  return true
+end
+
+-- Input/Output
 Syscalls.gpu_set = function(x, y, txt) if Oxygen.gpu then Oxygen.gpu.set(x, y, txt) end end
 Syscalls.gpu_fill = function(x,y,w,h,c) if Oxygen.gpu then Oxygen.gpu.fill(x,y,w,h,c) end end
 Syscalls.gpu_copy = function(x,y,w,h,tx,ty) if Oxygen.gpu then Oxygen.gpu.copy(x,y,w,h,tx,ty) end end
 Syscalls.gpu_res = function() return Oxygen.w, Oxygen.h end
-Syscalls.gpu_color = function(f, b) 
-  if Oxygen.gpu then 
-    if f then Oxygen.gpu.setForeground(f) end
-    if b then Oxygen.gpu.setBackground(b) end
-  end 
-end
+Syscalls.gpu_color = function(f, b) if Oxygen.gpu then if f then Oxygen.gpu.setForeground(f) end if b then Oxygen.gpu.setBackground(b) end end end
 Syscalls.pull = function(t) return hw.computer.pullSignal(t) end
 
-Syscalls.readln = function()
+Syscalls.readln = function(mask_char)
   local buffer = ""
   local function redraw()
     if not Oxygen.gpu then return end
     Oxygen.gpu.fill(1, Oxygen.input_row, Oxygen.w, 1, " ")
-    Oxygen.gpu.set(1, Oxygen.input_row, "> " .. buffer .. "_")
+    local show = buffer
+    if mask_char then show = string.rep(mask_char, #buffer) end
+    Oxygen.gpu.set(1, Oxygen.input_row, "> " .. show .. "_")
   end
   redraw()
   while true do
@@ -161,7 +176,7 @@ Syscalls.readln = function()
       local char = s[3]
       if char == 13 then
         Oxygen.gpu.fill(1, Oxygen.input_row, Oxygen.w, 1, " ")
-        Oxygen.printLine("> " .. buffer)
+        if not mask_char then Oxygen.printLine("> " .. buffer) end
         return buffer
       elseif char == 8 then
         if #buffer > 0 then buffer = hw.unicode.sub(buffer, 1, -2) end
@@ -176,48 +191,52 @@ end
 
 Syscalls.exit = function() hw.computer.shutdown() end
 
--- [6] EXEC
+-- [7] EXEC
 function Oxygen.exec(path, ...)
   local args = {...}
   local code, err = Syscalls.readFile(path)
-  if not code then Oxygen.ttyPrint("Err: "..tostring(err)) return end
+  if not code then Oxygen.ttyPrint("Exec Error: "..tostring(err)) return end
 
   local sandbox = {
     pairs=pairs, ipairs=ipairs, tostring=tostring, tonumber=tonumber,
     table=table, string=string, math=math, type=type, load=load, next=next,
     error=error, pcall=pcall, select=select,
     unicode = hw.unicode,
+    -- Restored OS (Safe Subset)
+    os = { time = hw.os_native.time, date = hw.os_native.date, clock = hw.os_native.clock, difftime = hw.os_native.difftime },
+    
     print = Oxygen.ttyPrint,
     readln = Syscalls.readln,
     spawn = Oxygen.exec,
     exit = Syscalls.exit,
+    
     sys = {
-      read = Syscalls.readFile,
-      write = Syscalls.writeFile,
-      ls = Syscalls.list,
-      mkdir = Syscalls.mkDir,
+      read = Syscalls.readFile, write = Syscalls.writeFile,
+      ls = Syscalls.list, mkdir = Syscalls.mkDir,
       fetch = Syscalls.fetch,
-      gpu = {
-        set = Syscalls.gpu_set,
-        fill = Syscalls.gpu_fill,
-        copy = Syscalls.gpu_copy,
-        res = Syscalls.gpu_res,
-        color = Syscalls.gpu_color
-      },
+      getuid = Syscalls.getuid, getuser = Syscalls.getuser, setuid = Syscalls.setuid,
+      gpu = { set = Syscalls.gpu_set, fill = Syscalls.gpu_fill, copy = Syscalls.gpu_copy, res = Syscalls.gpu_res, color = Syscalls.gpu_color },
       pull = Syscalls.pull
     },
-    cat = Syscalls.readFile,
-    ls = Syscalls.list,
-    fetch = Syscalls.fetch
+    -- Aliases
+    cat = Syscalls.readFile, ls = Syscalls.list, fetch = Syscalls.fetch
   }
   
   local proc, e = load(code, "="..path, "t", sandbox)
   if not proc then Oxygen.ttyPrint("Syn: "..tostring(e)) return end
-  local ok, perr = pcall(proc, table.unpack(args))
-  if not ok then Oxygen.ttyPrint("Runtime: " .. tostring(perr)) end
+  pcall(proc, table.unpack(args))
 end
 
--- [7] INIT
-Oxygen.ttyPrint("OxygenOS Kernel v0.6.2 (NetDebug)")
-Oxygen.exec("/bin/sh.lua")
-while true do hw.computer.pullSignal() end
+-- [8] BOOT
+Oxygen.ttyPrint("OxygenOS Kernel v0.7.0 (Secure)")
+Oxygen.ttyPrint("Launching Login Manager...")
+
+while true do
+  Oxygen.current_uid = 0
+  Oxygen.current_user = "root"
+  
+  Oxygen.exec("/bin/login")
+  
+  Oxygen.ttyPrint("Logout. Restarting...")
+  hw.computer.pullSignal(1)
+end

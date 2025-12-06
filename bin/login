@@ -1,0 +1,52 @@
+-- Oxygen Login Manager
+-- Читает /etc/passwd.ocf
+
+local function loadUsers()
+  local data = sys.read("/etc/passwd.ocf")
+  if not data then return nil end
+  -- Безопасный парсинг OCF (Lua table)
+  local f = load("return " .. data)
+  if f then return f() else return nil end
+end
+
+-- Рисуем UI
+sys.gpu.color(0xFFFFFF, 0x000000)
+sys.gpu.fill(1, 1, 80, 25, " ")
+sys.gpu.set(35, 10, "OxygenOS Login")
+
+while true do
+  print("\nAuthenticate required.")
+  sys.gpu.set(1, 12, "User: ")
+  local username = readln()
+  
+  sys.gpu.set(1, 13, "Pass: ")
+  -- readln со звездочкой (поддержка добавлена в kernel v0.7)
+  local password = readln("*") 
+  
+  local users = loadUsers()
+  
+  if users and users[username] then
+    local userData = users[username]
+    if userData.pass == password then
+      print("Welcome, " .. username .. "!")
+      
+      -- Применяем права пользователя
+      local ok, err = sys.setuid(userData.uid, username)
+      
+      if ok then
+        -- Запускаем оболочку
+        spawn("/bin/sh.lua")
+        -- Когда юзер пишет 'exit' в shell, мы попадаем сюда
+        exit() -- Завершаем login, ядро перезапустит его
+      else
+        print("Login Error: " .. tostring(err))
+      end
+    else
+      print("Incorrect password.")
+    end
+  else
+    print("Unknown user.")
+  end
+  
+  sys.pull(1) -- Задержка перед повторной попыткой
+end

@@ -1,111 +1,64 @@
--- Portage v1.0.2 (Fix: Syntax Error in Sync)
+-- Portage v1.0.2
 local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
 local DB_PATH = "/etc/oxygen/packages.db"
-
 local args_raw = ...
 local args = {}
 for w in string.gmatch(args_raw or "", "%S+") do table.insert(args, w) end
+local action, target = args[1], args[2]
 
-local action = args[1]
-local target = args[2]
-
--- Helpers
 local function loadDB()
-  local data = sys.read(DB_PATH)
-  if not data then return {} end
-  -- Локальная БД хранится просто как таблица "{...}", поэтому тут нужен return
-  local f = load("return " .. data)
+  local d = sys.read(DB_PATH)
+  if not d then return {} end
+  local f = load("return " .. d)
   if f then return f() else return {} end
 end
-
 local function saveDB(db)
-  local str = "{"
-  for pkg, ver in pairs(db) do
-    str = str .. '["' .. pkg .. '"]="' .. ver .. '",'
-  end
-  str = str .. "}"
-  sys.mkdir("/etc")
-  sys.mkdir("/etc/oxygen")
-  sys.write(DB_PATH, str)
+  local s = "{"
+  for p, v in pairs(db) do s = s .. '["'..p..'"]="'..v..'",' end
+  s = s .. "}"
+  sys.mkdir("/etc"); sys.mkdir("/etc/oxygen")
+  sys.write(DB_PATH, s)
 end
 
--- Logic
 if action == "sync" then
-  print("Portage: Syncing from " .. REPO_URL)
-  
-  local index, err = sys.fetch(REPO_URL .. "packages.index")
-  
-  if index and #index > 0 then
-    local func, loadErr = load(index)
-    
-    if not func then
-      print("Error: Invalid Index Syntax.")
-      print("Lua Error: " .. tostring(loadErr))
-      print("--- Content Start ---")
-      print(string.sub(index, 1, 100)) -- Показать начало файла для отладки
-    else
-      sys.mkdir("/var")
-      sys.write("/var/packages.index", index)
+  print("Syncing " .. REPO_URL)
+  local idx, err = sys.fetch(REPO_URL .. "packages.index")
+  if idx and #idx > 0 then
+    local f = load(idx)
+    if not f then print("Index Error") else
+      sys.mkdir("/var"); sys.write("/var/packages.index", idx)
       print("Sync complete.")
     end
-  else
-    print("Error: Fetch failed.")
-    if err then print("Reason: " .. tostring(err)) end
-  end
+  else print("Fetch fail: "..tostring(err)) end
 
 elseif action == "list" then
-  local index_raw = sys.read("/var/packages.index")
-  if not index_raw then print("Error: No index. Run 'emerge sync'") return end
-  
-  local func = load(index_raw)
-  if not func then print("Error: Corrupted index file.") return end
-  local index = func()
-  
-  local db = loadDB()
-  
-  print("Package List:")
-  for cat, pkgs in pairs(index) do
-    for name, data in pairs(pkgs) do
-      local cur = db[name] or "-"
-      print(name .. " [" .. cur .. "] -> " .. data.version)
-    end
+  local r = sys.read("/var/packages.index")
+  if not r then print("Run 'emerge sync'") return end
+  local idx = load(r)(); local db = loadDB()
+  print("Packages:")
+  for _, pkgs in pairs(idx) do
+    for n, d in pairs(pkgs) do print(n.." ["..(db[n] or "-").."] -> "..d.version) end
   end
 
 elseif action == "install" then
-  if not target then print("Usage: emerge install <pkg>") return end
-  
-  local index_raw = sys.read("/var/packages.index")
-  if not index_raw then print("Error: No index.") return end
-  local index = load(index_raw)()
-  
-  local pkg_data = nil
-  for cat, pkgs in pairs(index) do
-    if pkgs[target] then pkg_data = pkgs[target] break end
-  end
-  
-  if not pkg_data then print("Package not found.") return end
+  if not target then print("Usage: install <pkg>") return end
+  local r = sys.read("/var/packages.index")
+  if not r then print("No index.") return end
+  local idx = load(r)()
+  local pd = nil
+  for _, pkgs in pairs(idx) do if pkgs[target] then pd = pkgs[target] break end end
+  if not pd then print("Not found.") return end
   
   print("Downloading " .. target .. "...")
-  local content, err = sys.fetch(REPO_URL .. pkg_data.path)
-  
-  if content and #content > 0 then
-    -- Проверка на 404 (на случай если файл пакета забыли залить)
-    if string.sub(content, 1, 10) == "404: Not F" then
-       print("Error: 404 Not Found on server.")
-       return
-    end
-
-    print("Installing to " .. pkg_data.dest)
-    sys.write(pkg_data.dest, content)
+  local c, e = sys.fetch(REPO_URL .. pd.path)
+  if c and #c > 0 and string.sub(c, 1, 3) ~= "404" then
+    print("Installing to " .. pd.dest)
+    sys.write(pd.dest, c)
     local db = loadDB()
-    db[target] = pkg_data.version
+    db[target] = pd.version
     saveDB(db)
-    print("Successfully installed " .. target)
-  else
-    print("Download failed.")
-    if err then print("Reason: " .. tostring(err)) end
-  end
-
+    print("Done.")
+  else print("Download failed: "..tostring(e)) end
 else
-  print("Usage: emerge [sync|list|install <pkg>]")
+  print("Usage: emerge [sync|list|install]")
 end
