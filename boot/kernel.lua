@@ -1,4 +1,4 @@
--- OxygenOS Kernel v0.6.1 (Fix: TTY & Input Visibility)
+-- OxygenOS Kernel v0.6.2 (Net Debug)
 
 -- [1] HARDWARE SEIZE
 local hw = {
@@ -19,7 +19,7 @@ local Oxygen = {
   gpu = nil,
   inet = nil,
   w = 80, h = 25,
-  input_row = 25 -- Строка ввода всегда внизу
+  input_row = 25
 }
 
 local gpu_addr = hw.component.list("gpu")()
@@ -37,20 +37,16 @@ end
 local inet_addr = hw.component.list("internet")()
 if inet_addr then Oxygen.inet = hw.component.proxy(inet_addr) end
 
--- [4] TTY ENGINE (Исправлено: разделение лога и ввода)
+-- [4] TTY ENGINE
 function Oxygen.scroll()
   if not Oxygen.gpu then return end
-  -- Скроллим всё, КРОМЕ последней строки (строки ввода)
-  -- Копируем область 1..(h-1)
   Oxygen.gpu.copy(1, 2, Oxygen.w, Oxygen.input_row - 2, 0, -1)
-  -- Очищаем пред-последнюю строку (куда будем писать лог)
   Oxygen.gpu.fill(1, Oxygen.input_row - 1, Oxygen.w, 1, " ")
 end
 
 function Oxygen.printLine(line)
   if not Oxygen.gpu then return end
   Oxygen.scroll()
-  -- Пишем на строку ВЫШЕ ввода (h-1)
   Oxygen.gpu.set(1, Oxygen.input_row - 1, tostring(line))
 end
 
@@ -100,24 +96,45 @@ end
 Syscalls.list = function(path) return hw.component.invoke(boot_addr, "list", path) end
 Syscalls.mkDir = function(path) return hw.component.invoke(boot_addr, "makeDirectory", path) end
 
--- Network Debugged
+-- NETWORK DEBUGGED
 Syscalls.fetch = function(url)
-  if not Oxygen.inet then return nil, "No Net" end
-  Oxygen.ttyPrint("[NET] GET " .. url) -- Дебаг лог
-  local h, e = Oxygen.inet.request(url)
-  if not h then return nil, e end
-  local b = ""
-  while true do
-    local d = h.read()
-    if not d then break end
-    b = b .. d
-    hw.computer.pullSignal(0.0) -- Анти-фриз
+  if not Oxygen.inet then 
+    Oxygen.ttyPrint("[NET] Error: No Internet Card")
+    return nil, "No Net" 
   end
-  h.close()
-  return b
+  
+  Oxygen.ttyPrint("[NET] GET " .. url)
+  
+  local handle, err = Oxygen.inet.request(url)
+  if not handle then 
+    Oxygen.ttyPrint("[NET] Connect Fail: " .. tostring(err))
+    return nil, err 
+  end
+  
+  local buffer = ""
+  -- Читаем статус ответа (не все версии OC поддерживают response code, но попробуем)
+  local code, msg, header = handle.response()
+  if code then
+     Oxygen.ttyPrint("[NET] Response: " .. tostring(code))
+     if code == 404 then
+        handle.close()
+        return nil, "404 Not Found"
+     end
+  end
+
+  while true do
+    local data = handle.read()
+    if not data then break end
+    buffer = buffer .. data
+    hw.computer.pullSignal(0.0) -- Антифриз
+  end
+  
+  handle.close()
+  Oxygen.ttyPrint("[NET] Done. Size: " .. #buffer .. " bytes")
+  return buffer
 end
 
--- GPU API (для Nano)
+-- GPU & Input
 Syscalls.gpu_set = function(x, y, txt) if Oxygen.gpu then Oxygen.gpu.set(x, y, txt) end end
 Syscalls.gpu_fill = function(x,y,w,h,c) if Oxygen.gpu then Oxygen.gpu.fill(x,y,w,h,c) end end
 Syscalls.gpu_copy = function(x,y,w,h,tx,ty) if Oxygen.gpu then Oxygen.gpu.copy(x,y,w,h,tx,ty) end end
@@ -130,30 +147,23 @@ Syscalls.gpu_color = function(f, b)
 end
 Syscalls.pull = function(t) return hw.computer.pullSignal(t) end
 
--- Input (Исправлено: возвращена отрисовка ввода)
 Syscalls.readln = function()
   local buffer = ""
-  
-  -- Функция отрисовки ввода на ПОСЛЕДНЕЙ строке
   local function redraw()
     if not Oxygen.gpu then return end
     Oxygen.gpu.fill(1, Oxygen.input_row, Oxygen.w, 1, " ")
     Oxygen.gpu.set(1, Oxygen.input_row, "> " .. buffer .. "_")
   end
-
-  redraw() -- Рисуем сразу при вызове
-  
+  redraw()
   while true do
     local s = {hw.computer.pullSignal()}
     if s[1] == "key_down" then
       local char = s[3]
-      if char == 13 then -- Enter
-        -- Очищаем строку ввода визуально
+      if char == 13 then
         Oxygen.gpu.fill(1, Oxygen.input_row, Oxygen.w, 1, " ")
-        -- Дублируем введенное в лог (чтобы осталось на экране выше)
         Oxygen.printLine("> " .. buffer)
         return buffer
-      elseif char == 8 then -- Backspace
+      elseif char == 8 then
         if #buffer > 0 then buffer = hw.unicode.sub(buffer, 1, -2) end
         redraw()
       elseif char >= 32 then
@@ -177,12 +187,10 @@ function Oxygen.exec(path, ...)
     table=table, string=string, math=math, type=type, load=load, next=next,
     error=error, pcall=pcall, select=select,
     unicode = hw.unicode,
-    -- Syscalls
     print = Oxygen.ttyPrint,
     readln = Syscalls.readln,
     spawn = Oxygen.exec,
     exit = Syscalls.exit,
-    
     sys = {
       read = Syscalls.readFile,
       write = Syscalls.writeFile,
@@ -205,10 +213,11 @@ function Oxygen.exec(path, ...)
   
   local proc, e = load(code, "="..path, "t", sandbox)
   if not proc then Oxygen.ttyPrint("Syn: "..tostring(e)) return end
-  pcall(proc, table.unpack(args))
+  local ok, perr = pcall(proc, table.unpack(args))
+  if not ok then Oxygen.ttyPrint("Runtime: " .. tostring(perr)) end
 end
 
 -- [7] INIT
-Oxygen.ttyPrint("OxygenOS Kernel v0.6.1 (Fixes)")
+Oxygen.ttyPrint("OxygenOS Kernel v0.6.2 (NetDebug)")
 Oxygen.exec("/bin/sh.lua")
 while true do hw.computer.pullSignal() end

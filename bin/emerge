@@ -1,20 +1,17 @@
--- Portage v1.0 (Package Manager)
--- Args: строка "install pkg" или "sync"
-
-local args_raw = ... -- Получаем аргументы от spawn
+-- ВАЖНО: Убедись, что ссылка верная
 local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
 local DB_PATH = "/etc/oxygen/packages.db"
 
--- Парсинг аргументов
+local args_raw = ...
 local args = {}
 for w in string.gmatch(args_raw or "", "%S+") do table.insert(args, w) end
 
 local action = args[1]
 local target = args[2]
 
--- Вспомогательные функции
+-- Helpers
 local function loadDB()
-  local data = cat(DB_PATH)
+  local data = sys.read(DB_PATH)
   if not data then return {} end
   local f = load("return " .. data)
   if f then return f() else return {} end
@@ -26,27 +23,35 @@ local function saveDB(db)
     str = str .. '["' .. pkg .. '"]="' .. ver .. '",'
   end
   str = str .. "}"
-  -- Убедимся, что папка существует
-  mkdir("/etc")
-  mkdir("/etc/oxygen")
-  write(DB_PATH, str)
+  sys.mkdir("/etc")
+  sys.mkdir("/etc/oxygen")
+  sys.write(DB_PATH, str)
 end
 
--- Логика
+-- Logic
 if action == "sync" then
   print("Portage: Syncing from " .. REPO_URL)
-  local index = fetch(REPO_URL .. "packages.index")
+  
+  local index, err = sys.fetch(REPO_URL .. "packages.index")
   
   if index and #index > 0 then
-    mkdir("/var")
-    write("/var/packages.index", index)
-    print("Sync complete.")
+    -- Пробуем распарсить, чтобы убедиться что это не 404 страница текстом
+    local func, loadErr = load("return " .. index)
+    if not func then
+      print("Error: Index invalid (is it 404 page?).")
+      print(index) -- Выведет HTML если там ошибка
+    else
+      sys.mkdir("/var")
+      sys.write("/var/packages.index", index)
+      print("Sync complete.")
+    end
   else
-    print("Error: Failed to fetch index.")
+    print("Error: Fetch returned nil/empty.")
+    if err then print("Reason: " .. tostring(err)) end
   end
 
 elseif action == "list" then
-  local index_raw = cat("/var/packages.index")
+  local index_raw = sys.read("/var/packages.index")
   if not index_raw then print("Error: No index. Run 'emerge sync'") return end
   
   local index = load("return " .. index_raw)()
@@ -63,11 +68,10 @@ elseif action == "list" then
 elseif action == "install" then
   if not target then print("Usage: emerge install <pkg>") return end
   
-  local index_raw = cat("/var/packages.index")
+  local index_raw = sys.read("/var/packages.index")
   if not index_raw then print("Error: No index.") return end
   local index = load("return " .. index_raw)()
   
-  -- Поиск пакета
   local pkg_data = nil
   for cat, pkgs in pairs(index) do
     if pkgs[target] then pkg_data = pkgs[target] break end
@@ -76,19 +80,17 @@ elseif action == "install" then
   if not pkg_data then print("Package not found.") return end
   
   print("Downloading " .. target .. "...")
-  local content = fetch(REPO_URL .. pkg_data.path)
+  local content, err = sys.fetch(REPO_URL .. pkg_data.path)
   
   if content then
     print("Installing to " .. pkg_data.dest)
-    -- TODO: Создать директорию назначения если её нет, парся путь
-    write(pkg_data.dest, content)
-    
+    sys.write(pkg_data.dest, content)
     local db = loadDB()
     db[target] = pkg_data.version
     saveDB(db)
     print("Done.")
   else
-    print("Download failed.")
+    print("Download failed: " .. tostring(err))
   end
 
 else
