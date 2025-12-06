@@ -5,7 +5,7 @@ local shell = require("shell")
 local fs = require("filesystem")
 local term = require("term")
 
-local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/main/"
+local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
 
 local MOCK_MODE = false
 
