@@ -1,0 +1,64 @@
+-- Portage v1.0.2
+local REPO_URL = "https://raw.githubusercontent.com/0pt1mist/OxygenOS/test/"
+local DB_PATH = "/etc/oxygen/packages.db"
+local args_raw = ...
+local args = {}
+for w in string.gmatch(args_raw or "", "%S+") do table.insert(args, w) end
+local action, target = args[1], args[2]
+
+local function loadDB()
+  local d = sys.read(DB_PATH)
+  if not d then return {} end
+  local f = load("return " .. d)
+  if f then return f() else return {} end
+end
+local function saveDB(db)
+  local s = "{"
+  for p, v in pairs(db) do s = s .. '["'..p..'"]="'..v..'",' end
+  s = s .. "}"
+  sys.mkdir("/etc"); sys.mkdir("/etc/oxygen")
+  sys.write(DB_PATH, s)
+end
+
+if action == "sync" then
+  print("Syncing " .. REPO_URL)
+  local idx, err = sys.fetch(REPO_URL .. "packages.index")
+  if idx and #idx > 0 then
+    local f = load(idx)
+    if not f then print("Index Error") else
+      sys.mkdir("/var"); sys.write("/var/packages.index", idx)
+      print("Sync complete.")
+    end
+  else print("Fetch fail: "..tostring(err)) end
+
+elseif action == "list" then
+  local r = sys.read("/var/packages.index")
+  if not r then print("Run 'emerge sync'") return end
+  local idx = load(r)(); local db = loadDB()
+  print("Packages:")
+  for _, pkgs in pairs(idx) do
+    for n, d in pairs(pkgs) do print(n.." ["..(db[n] or "-").."] -> "..d.version) end
+  end
+
+elseif action == "install" then
+  if not target then print("Usage: install <pkg>") return end
+  local r = sys.read("/var/packages.index")
+  if not r then print("No index.") return end
+  local idx = load(r)()
+  local pd = nil
+  for _, pkgs in pairs(idx) do if pkgs[target] then pd = pkgs[target] break end end
+  if not pd then print("Not found.") return end
+  
+  print("Downloading " .. target .. "...")
+  local c, e = sys.fetch(REPO_URL .. pd.path)
+  if c and #c > 0 and string.sub(c, 1, 3) ~= "404" then
+    print("Installing to " .. pd.dest)
+    sys.write(pd.dest, c)
+    local db = loadDB()
+    db[target] = pd.version
+    saveDB(db)
+    print("Done.")
+  else print("Download failed: "..tostring(e)) end
+else
+  print("Usage: emerge [sync|list|install]")
+end

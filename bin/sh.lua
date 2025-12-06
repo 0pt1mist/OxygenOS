@@ -1,58 +1,92 @@
-print("Oxygen Shell v1.2")
-print("Type 'help' for commands.")
+-- Oxygen Shell v2.3 (User Aware)
+local args = {...}
+local current_dir = "/"
+local user = "unknown"
+if sys and sys.getuser then user = sys.getuser() end
+
+-- [Helpers]
+local function resolvePath(path)
+  if string.sub(path, 1, 1) ~= "/" then
+    if current_dir == "/" then path = "/" .. path else path = current_dir .. "/" .. path end
+  end
+  local parts = {}
+  for part in string.gmatch(path, "[^/]+") do
+    if part == ".." then
+      if #parts > 0 then table.remove(parts) end
+    elseif part ~= "." and part ~= "" then table.insert(parts, part) end
+  end
+  return "/" .. table.concat(parts, "/")
+end
+
+local function exists(path)
+  local list = ls(path)
+  if list then return "dir" end
+  local content = cat(path)
+  if content then return "file" end
+  return nil
+end
+
+-- [Main]
+print("OxygenOS Shell v2.3")
+print("Logged in as: " .. user)
 
 while true do
-  local input = readln()
+  local prompt = user .. "@" .. current_dir .. " # "
+  if sys and sys.gpu then
+    sys.gpu.color(0x00FF00, 0x000000)
+    sys.gpu.set(1, sys.gpu.res(), prompt)
+    sys.gpu.color(0xFFFFFF, 0x000000)
+  else
+    print(prompt)
+  end
   
-  -- Разделение строки на команду и аргументы
+  local input = readln()
   local parts = {}
   for w in string.gmatch(input, "%S+") do table.insert(parts, w) end
   
   if #parts > 0 then
     local cmd = parts[1]
-    local args = {}
-    -- Все последующие части - аргументы
-    for i = 2, #parts do table.insert(args, parts[i]) end
+    local arg1 = parts[2]
     
     if cmd == "exit" then
-      exit()
-    elseif cmd == "help" then
-      print("Built-ins: ls, help, exit, reboot")
-      print("Programs: emerge <cmd>, or any file in /bin")
+      exit() -- Выход в Login
+    elseif cmd == "cd" then
+      if not arg1 then current_dir = "/" else
+        local new = resolvePath(arg1)
+        if exists(new) == "dir" then current_dir = new else print("cd: invalid dir") end
+      end
+    elseif cmd == "pwd" then
+      print(current_dir)
     elseif cmd == "ls" then
-      local path = args[1] or "/"
-      local l = ls(path)
+      local t = current_dir
+      if arg1 then t = resolvePath(arg1) end
+      local l = ls(t)
       if l then
-        local s = ""
-        for k,v in pairs(l) do s = s .. v .. "  " end
-        print(s)
-      else
-        print("Error: Path not found")
+        local o, c = "", 0
+        for _, f in pairs(l) do
+           o = o .. f .. "  "; c = c + 1
+           if c % 4 == 0 then o = o .. "\n" end
+        end
+        print(o)
+      else print("ls: error") end
+    elseif cmd == "cat" then
+      if not arg1 then print("Usage: cat <file>") else
+        local d = cat(resolvePath(arg1))
+        if d then print(d) else print("File not found") end
       end
-    elseif cmd == "reboot" then
-      exit() -- В текущей реализации exit выключает ПК, но можно сделать перезагрузку
+    elseif cmd == "help" then
+      print("Builtins: cd, ls, pwd, cat, exit")
+      print("Programs: emerge, nano, login")
     else
-      -- Попытка запуска внешней программы
-      local bin_path = "/bin/" .. cmd
-      -- Мы пробуем запустить. Если файла нет, exec вернет ошибку внутри ядра
-      -- Но чтобы было красивее, проверим через cat (хотя это не эффективно, но пока сойдет)
-      local exists = cat(bin_path)
-      if not exists then
-        -- Пробуем без /bin/ (абсолютный путь)
-        bin_path = cmd
-        exists = cat(bin_path)
-      end
-      
-      if exists then
-        -- ВАЖНО: передаем args распакованными или таблицей?
-        -- Kernel exec делает table.unpack, значит мы можем передать каждый аргумент отдельно
-        -- Но проще передать строку или таблицу. 
-        -- Emerge ожидает строку или части. Передадим строку целиком для совместимости
-        local arg_str = table.concat(args, " ")
-        spawn(bin_path, arg_str)
-      else
-        print("Unknown command: " .. cmd)
-      end
+      local run, abs, bin = nil, resolvePath(cmd), resolvePath("/bin/"..cmd)
+      if exists(bin) == "file" then run = bin elseif exists(abs) == "file" then run = abs end
+      if run then
+        local p = ""
+        if #parts > 1 then 
+           if cmd=="nano" then p=resolvePath(arg1) else p=table.concat(parts," ",2) end 
+        end
+        spawn(run, p)
+      else print("Unknown: "..cmd) end
     end
   end
 end
