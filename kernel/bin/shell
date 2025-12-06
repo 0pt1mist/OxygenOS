@@ -1,90 +1,136 @@
--- kernel/bin/shell для EEPROM
-local function print(...)
-  local args = {...}
-  local message = ""
-  
-  for i, arg in ipairs(args) do
-    if i > 1 then message = message .. " " end
-    message = message .. tostring(arg)
-  end
-  
-  -- Работаем с GPU напрямую
-  local gpu = component.gpu
-  if not gpu then
-    for addr in component.list("gpu") do
-      gpu = component.proxy(addr)
-      break
-    end
-  end
-  
-  if gpu then
-    -- Привязываемся к экрану если нужно
-    if not gpu.getScreen() then
-      for screenAddr in component.list("screen") do
-        gpu.bind(screenAddr)
-        break
-      end
-    end
-    gpu.set(1, 1, message)
-  end
-end
+-- /bin/shell
+local fs = require("filesystem")
+local component = require("component")
+local computer = require("computer")
+local unicode = require("unicode")
 
-local function read()
-  local input = ""
+local gpu = component.proxy(component.list("gpu")())
+local w, h = gpu.getResolution()
+
+-- === Улучшенный ввод текста (Line Editor) ===
+local function readLine(prompt)
+  local str = ""
+  -- Рисуем приглашение
+  gpu.set(1, h, prompt)
+  local cursor_pos = #prompt + 1
+  
   while true do
-    local signal = {computer.pullSignal()}
-    if signal[1] == "key_down" then
-      local char = string.char(signal[3])
-      if char == "\r" or char == "\n" then
-        return input
-      else
-        input = input .. char
+    -- Ждем события (нажатие клавиш)
+    local name, addr, char, code = computer.pullSignal()
+    
+    if name == "key_down" then
+      if code == 28 then -- Enter
+        -- "Печатаем" строку в терминал (сдвигаем экран)
+        gpu.copy(1, 2, w, h - 1, 0, -1)
+        gpu.fill(1, h, w, 1, " ")
+        -- Возвращаем введенную строку
+        return str
+        
+      elseif code == 14 then -- Backspace
+        if #str > 0 then
+          str = unicode.sub(str, 1, -2)
+          -- Визуально стираем последний символ
+          gpu.set(cursor_pos + unicode.len(str), h, " ") 
+        end
+        
+      elseif char > 0 then -- Обычный символ
+        str = str .. unicode.char(char)
       end
+      
+      -- Перерисовка строки ввода
+      gpu.set(cursor_pos, h, str .. "_ ") 
+    end
+    
+    -- Обработка вставки из буфера обмена (опционально)
+    if name == "clipboard" and char then -- char тут - строка
+       str = str .. char
+       gpu.set(cursor_pos, h, str .. "_ ")
     end
   end
 end
 
-local commands = {
-  help = function()
-    print("Commands: help, reboot, ls")
-  end,
-  
-  reboot = function()
-    computer.shutdown(true)
-  end,
-  
-  ls = function(path)
-    path = path or "/"
-    for addr in component.list("filesystem") do
-      local fs = component.proxy(addr)
-      if fs.exists(path) then
-        for item in fs.list(path) do
-          print(item)
-        end
-        return
-      end
-    end
-    print("Not found: " .. path)
+-- === Вспомогательная функция для разбиения строки ===
+local function split(input)
+  local args = {}
+  for word in input:gmatch("%S+") do
+    table.insert(args, word)
   end
-}
+  return args
+end
 
-print("OxygenOS Shell")
+-- === Главный цикл Shell ===
+print("Welcome to OxygenOS v0.1")
+print("Logged in as: root")
+print("------------------------")
 
 while true do
-  print("> ")
-  local input = read()
+  local input = readLine("oxygen# ")
+  local args = split(input)
   
-  if input then
-    local cmd = input:match("^%s*(%S+)")
-    local arg = input:match("^%s*%S+%s+(.+)$")
+  if #args > 0 then
+    local cmd = args[1]
     
-    if cmd and commands[cmd] then
-      local success, err = pcall(commands[cmd], arg)
-      if not success then
-        print("Error: " .. tostring(err))
+    -- Встроенные команды
+    if cmd == "exit" then
+      print("Shutting down...")
+      os.sleep(1)
+      computer.shutdown()
+      
+    elseif cmd == "reboot" then
+      print("Rebooting...")
+      os.sleep(1)
+      computer.shutdown(true)
+      
+    elseif cmd == "ls" then
+      local path = args[2] or "/"
+      if fs.exists(path) then
+        if fs.isDirectory(path) then
+          -- ВАЖНО: fs.list возвращает итератор, используем его напрямую
+          for file in fs.list(path) do
+            print(file)
+          end
+        else
+          print(path) -- Это файл
+        end
+      else
+        print("ls: cannot access '"..path.."': No such file")
       end
-    elseif cmd then
-      print("Unknown: " .. cmd)
+      
+    elseif cmd == "cat" then
+      local path = args[2]
+      if path and fs.exists(path) and not fs.isDirectory(path) then
+        print(fs.readFile(path))
+      else
+        print("Usage: cat <file>")
+      end
+      
+    elseif cmd == "help" then
+      print("Commands: ls, cat, reboot, exit, help")
+      print("To run scripts: /bin/scriptname.lua")
+      
+    else
+      -- Попытка запуска внешнего скрипта
+      local binPath = cmd
+      -- Если путь не абсолютный, ищем в /bin
+      if not cmd:find("/") then
+        binPath = "/bin/" .. cmd
+      end
+
+      if fs.exists(binPath) and not fs.isDirectory(binPath) then
+        local code = fs.readFile(binPath)
+        local script, syntaxErr = load(code, cmd, "t", _G)
+        
+        if script then
+          local status, runtimeErr = pcall(script, table.unpack(args, 2))
+          if not status then
+            print("Error: " .. tostring(runtimeErr))
+          end
+        else
+          print("Syntax error: " .. tostring(syntaxErr))
+        end
+      else
+        print("Unknown command: " .. cmd)
+      end
     end
   end
 end

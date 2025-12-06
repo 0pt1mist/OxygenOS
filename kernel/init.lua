@@ -1,108 +1,85 @@
--- kernel/init.lua для EEPROM
--- OxygenOS v0.1 - BIOS-совместимая версия
+-- /init.lua
+-- OxygenOS Kernel v0.1 (Stable Boot)
 
--- === Базовые проверки в EEPROM ===
-if not component or not computer then
-  return
+local component = component or require("component")
+local computer = computer or require("computer")
+local unicode = unicode or require("unicode")
+
+-- === 1. Инициализация Дисплея (Kernel Log) ===
+local gpu = component.proxy(component.list("gpu")())
+local screen = component.list("screen")()
+if gpu and screen then gpu.bind(screen) end
+local w, h = gpu.getResolution()
+
+-- Примитивная функция скроллинга для логов ядра
+local function kprint(msg)
+  if not gpu then return end
+  gpu.copy(1, 2, w, h - 1, 0, -1) -- Сдвиг экрана вверх
+  gpu.fill(1, h, w, 1, " ")       -- Очистка нижней строки
+  gpu.set(1, h, tostring(msg))    -- Вывод сообщения
 end
 
--- === Минимальный вывод для EEPROM ===
-local function debugPrint(message)
-  -- Получаем GPU напрямую
-  local gpu = component.gpu
-  if not gpu then
-    -- Пробуем найти GPU через список компонентов
-    for addr in component.list("gpu") do
-      gpu = component.proxy(addr)
-      break
-    end
-  end
-  
-  if gpu then
-    -- Пробуем привязаться к экрану
-    for screenAddr in component.list("screen") do
-      if gpu.getScreen() ~= screenAddr then
-        gpu.bind(screenAddr)
-      end
-      break
-    end
-    
-    -- Выводим текст
-    gpu.set(1, 1, tostring(message))
-    return true
-  end
-  
-  -- Если экрана нет, используем звук
-  computer.beep(500, 0.1)
-  return false
+gpu.fill(1, 1, w, h, " ") -- Очистка экрана при загрузке
+kprint("OxygenOS Kernel v0.1 loading...")
+
+-- === 2. Драйвер Файловой Системы ===
+local bootAddr = computer.getBootAddress()
+local bootFS = component.proxy(bootAddr)
+
+-- Создаем API, совместимый с библиотекой "filesystem" OpenOS
+local fs_driver = {}
+
+function fs_driver.list(path)
+  return bootFS.list(path)
 end
 
-debugPrint("OxygenOS Booting...")
-
--- === Поиск и загрузка shell ===
-local function findAndLoadShell()
-  for fsAddr in component.list("filesystem") do
-    local fs = component.proxy(fsAddr)
-    
-    local shellPaths = {
-      "/bin/shell",
-      "bin/shell", 
-      "/shell",
-      "shell"
-    }
-    
-    for _, path in ipairs(shellPaths) do
-      if fs.exists(path) and not fs.isDirectory(path) then
-        debugPrint("Found: " .. path)
-        
-        local handle = fs.open(path, "r")
-        if not handle then
-          return nil
-        end
-        
-        local content = ""
-        while true do
-          local chunk = fs.read(handle, 1024)
-          if not chunk then break end
-          content = content .. chunk
-        end
-        fs.close(handle)
-        
-        if content and content ~= "" then
-          return load(content, "=shell")
-        end
-      end
-    end
-  end
-  return nil
+function fs_driver.exists(path)
+  return bootFS.exists(path)
 end
 
--- === Основная процедура загрузки ===
-local function main()
-  computer.pullSignal(0.5)
-  
-  local shell, err = findAndLoadShell()
-  if not shell then
-    debugPrint("Shell not found")
-    
-    -- Аварийный режим с базовыми командами
-    while true do
-      debugPrint("Emergency mode - reboot")
-      computer.pullSignal(1)
-    end
-  end
-  
-  local success, shellErr = pcall(shell)
-  if not success then
-    debugPrint("Shell crash: " .. tostring(shellErr))
-  end
-  
-  computer.shutdown(true)
+function fs_driver.isDirectory(path)
+  return bootFS.isDirectory(path)
 end
 
--- Запускаем систему
-local ok, err = pcall(main)
-if not ok then
-  debugPrint("Boot failed")
-  computer.shutdown(true)
+function fs_driver.readFile(path)
+  local handle = bootFS.open(path, "r")
+  if not handle then return nil, "File not found" end
+  local buffer = ""
+  repeat
+    local data = bootFS.read(handle, math.huge)
+    if data then buffer = buffer .. data end
+  until not data
+  bootFS.close(handle)
+  return buffer
+end
+
+-- === 3. Подготовка окружения (User Space) ===
+-- Регистрируем fs, чтобы в Shell работал require("filesystem")
+package.loaded["filesystem"] = fs_driver
+
+-- Добавляем глобальный print, который использует наш GPU вывод
+_G.print = kprint
+
+-- === 4. Запуск Shell ===
+kprint("Mounting /bin/shell...")
+
+if not bootFS.exists("/bin/shell") then
+  kprint("PANIC: /bin/shell not found!")
+  while true do computer.pullSignal() end -- Halt
+end
+
+local shellCode = fs_driver.readFile("/bin/shell")
+local shellFunc, err = load(shellCode, "shell", "t", _G)
+
+if not shellFunc then
+  kprint("Kernel Panic (Syntax Error): " .. tostring(err))
+  while true do computer.pullSignal() end
+end
+
+-- Передача управления Шелу
+local status, err = pcall(shellFunc)
+
+if not status then
+  kprint("System Crash: " .. tostring(err))
+  kprint("Press Power to reboot.")
 end
