@@ -1,6 +1,6 @@
--- OxygenOS Kernel v0.2.0 (Syscalls Update)
+-- OxygenOS Kernel v0.5.0 (Stable Release)
 
--- [1] HARDWARE SEIZE
+-- [1] HARDWARE SEIZE (Захват оборудования)
 local hw = {
   component = component,
   computer = computer,
@@ -8,40 +8,73 @@ local hw = {
 }
 local boot_addr = hw.computer.getBootAddress()
 
--- [2] GLOBAL PURGE
+-- [2] GLOBAL PURGE (Очистка окружения)
 _G.component = nil
 _G.computer = nil
 _G.io = nil
 _G.os = nil
+_G.print = nil
 
--- [3] KERNEL API & DRIVERS
+-- [3] KERNEL DRIVERS (Драйверы)
 local Oxygen = {
   gpu = nil,
-  screenWidth = 80,
-  screenHeight = 25
+  inet = nil,
+  w = 80, h = 25,
+  input_row = 25
 }
 
--- GPU Driver
+-- GPU Init
 local gpu_addr = hw.component.list("gpu")()
 local screen_addr = hw.component.list("screen")()
 if gpu_addr and screen_addr then
   Oxygen.gpu = hw.component.proxy(gpu_addr)
   Oxygen.gpu.bind(screen_addr)
-  Oxygen.gpu.setResolution(Oxygen.screenWidth, Oxygen.screenHeight)
+  Oxygen.w, Oxygen.h = Oxygen.gpu.getResolution()
   Oxygen.gpu.setBackground(0x000000)
   Oxygen.gpu.setForeground(0xFFFFFF)
-  Oxygen.gpu.fill(1, 1, Oxygen.screenWidth, Oxygen.screenHeight, " ")
+  Oxygen.gpu.fill(1, 1, Oxygen.w, Oxygen.h, " ")
 end
 
-function Oxygen.log(msg)
-  if Oxygen.gpu then
-    Oxygen.gpu.copy(1, 2, 80, 24, 0, -1)
-    Oxygen.gpu.fill(1, 24, 80, 1, " ")
-    Oxygen.gpu.set(1, 24, "[KER] " .. tostring(msg))
+-- Network Init
+local inet_addr = hw.component.list("internet")()
+if inet_addr then
+  Oxygen.inet = hw.component.proxy(inet_addr)
+end
+
+-- [4] TTY ENGINE (Графический вывод)
+function Oxygen.scroll()
+  if not Oxygen.gpu then return end
+  Oxygen.gpu.copy(1, 2, Oxygen.w, Oxygen.input_row - 2, 0, -1)
+  Oxygen.gpu.fill(1, Oxygen.input_row - 1, Oxygen.w, 1, " ")
+end
+
+function Oxygen.printLine(line)
+  if not Oxygen.gpu then return end
+  Oxygen.scroll()
+  Oxygen.gpu.set(1, Oxygen.input_row - 1, tostring(line))
+end
+
+function Oxygen.ttyPrint(text)
+  if not text then text = "nil" end
+  text = tostring(text)
+  local line = ""
+  for i = 1, #text do
+    local char = string.sub(text, i, i)
+    if char == "\n" then
+      Oxygen.printLine(line)
+      line = ""
+    else
+      line = line .. char
+      if hw.unicode.len(line) >= Oxygen.w then
+        Oxygen.printLine(line)
+        line = ""
+      end
+    end
   end
+  if #line > 0 then Oxygen.printLine(line) end
 end
 
--- VFS Driver (Минимальный, только чтение с Boot диска)
+-- [5] FILE SYSTEM API
 function Oxygen.readFile(path)
   local handle = hw.component.invoke(boot_addr, "open", path)
   if not handle then return nil, "File not found" end
@@ -54,99 +87,133 @@ function Oxygen.readFile(path)
   return buffer
 end
 
-function Oxygen.listDir(path)
-  local list = hw.component.invoke(boot_addr, "list", path)
-  return list -- Returns table or nil
+function Oxygen.writeFile(path, data)
+  local handle = hw.component.invoke(boot_addr, "open", path, "w")
+  if not handle then return false, "Write error" end
+  hw.component.invoke(boot_addr, "write", handle, data)
+  hw.component.invoke(boot_addr, "close", handle)
+  return true
 end
 
--- [4] SYSCALL INTERFACE (API для Userland)
-local Syscalls = {}
-
-function Syscalls.print(text)
-  if Oxygen.gpu then
-    -- Эмуляция терминального вывода
-    Oxygen.gpu.copy(1, 2, 80, 24, 0, -1)
-    Oxygen.gpu.fill(1, 24, 80, 1, " ")
-    Oxygen.gpu.set(1, 24, tostring(text))
-  end
+function Oxygen.makeDir(path)
+  return hw.component.invoke(boot_addr, "makeDirectory", path)
 end
 
-function Syscalls.readln()
-  -- Блокирующая функция ввода (очень примитивная)
-  local buffer = ""
-  Oxygen.gpu.set(1, 24, "> " .. buffer .. "_")
+-- [6] NETWORK API
+function Oxygen.http_get(url)
+  if not Oxygen.inet then return nil, "No Internet Card" end
+  local handle, err = Oxygen.inet.request(url)
+  if not handle then return nil, err end
   
+  local buffer = ""
   while true do
-    local sig = {hw.computer.pullSignal()}
-    if sig[1] == "key_down" then
-      local char_code = sig[3]
-      local key_code = sig[4]
-      
-      if char_code == 13 then -- Enter
-        return buffer
-      elseif char_code == 8 then -- Backspace
-        if #buffer > 0 then
-          buffer = string.sub(buffer, 1, -1)
-        end
-      elseif char_code >= 32 and char_code <= 126 then
-        buffer = buffer .. string.char(char_code)
-      end
-      -- Redraw input line
-      Oxygen.gpu.fill(1, 24, 80, 1, " ")
-      Oxygen.gpu.set(1, 24, "> " .. buffer .. "_")
+    local data, reason = handle.read() 
+    if data then
+      buffer = buffer .. data
+    elseif not data and reason then -- EOF or Error
+       break
+    elseif not data then -- Just EOF
+       break
     end
+    hw.computer.pullSignal(0.05) -- Anti-freeze
   end
+  handle.close()
+  return buffer
 end
 
-function Syscalls.list(path)
-  return Oxygen.listDir(path)
-end
-
-function Syscalls.read_file(path)
-  return Oxygen.readFile(path)
-end
-
-function Syscalls.exit()
-  hw.computer.shutdown()
-end
-
--- [5] PROCESS LOADER (Песочница)
-function Oxygen.exec(path)
-  Oxygen.log("Executing: " .. path)
+-- [7] PROCESS & SANDBOX
+function Oxygen.exec(path, ...)
+  local args = {...}
   local code, err = Oxygen.readFile(path)
   if not code then 
-    Syscalls.print("Error: " .. tostring(err)) 
-    return 
+    Oxygen.ttyPrint("Exec Error: " .. tostring(err)) 
+    return false
   end
 
-  -- Создаем песочницу для процесса
+  -- Определение системных вызовов для процессов
+  local Syscalls = {
+    print = Oxygen.ttyPrint,
+    readln = Oxygen.readln,
+    ls = function(p) return hw.component.invoke(boot_addr, "list", p) end,
+    cat = Oxygen.readFile,
+    write = Oxygen.writeFile,
+    mkdir = Oxygen.makeDir,
+    fetch = Oxygen.http_get,
+    spawn = Oxygen.exec,  -- Рекурсивный запуск (процесс запускает процесс)
+    exit = function() hw.computer.shutdown() end,
+    sleep = function(t) local d = os.time() + t while os.time() < d do hw.computer.pullSignal(0.1) end end
+  }
+
   local sandbox = {
+    -- Standard Lua
+    pairs=pairs, ipairs=ipairs, tostring=tostring, tonumber=tonumber,
+    table=table, string=string, math=math, type=type, load=load, next=next,
+    error=error, pcall=pcall, xpcall=xpcall, select=select,
+    -- System
+    syscall = Syscalls, -- Можно через syscall.print()
+    -- Aliases for convenience
     print = Syscalls.print,
     readln = Syscalls.readln,
-    ls = Syscalls.list,
-    cat = Syscalls.read_file,
-    exit = Syscalls.exit,
-    pairs = pairs, ipairs = ipairs, tostring = tostring, 
-    table = table, string = string, math = math
+    spawn = Syscalls.spawn,
+    ls = Syscalls.ls,
+    cat = Syscalls.cat,
+    write = Syscalls.write,
+    mkdir = Syscalls.mkdir,
+    fetch = Syscalls.fetch,
+    exit = Syscalls.exit
   }
   
   local proc, load_err = load(code, "="..path, "t", sandbox)
   if not proc then
-    Syscalls.print("Syntax Error: " .. tostring(load_err))
+    Oxygen.ttyPrint("Syntax Error: " .. tostring(load_err))
+    return false
   else
-    -- Запускаем процесс (сейчас это блокирует ядро, позже сделаем coroutines)
-    local status, runtime_err = pcall(proc)
+    -- Запуск процесса с передачей аргументов
+    local status, runtime_err = pcall(proc, table.unpack(args))
     if not status then
-      Syscalls.print("Runtime Error: " .. tostring(runtime_err))
+      Oxygen.ttyPrint("Runtime Error: " .. tostring(runtime_err))
+    end
+    return true
+  end
+end
+
+-- [8] INPUT HANDLING
+function Oxygen.readln()
+  local buffer = ""
+  local function redraw()
+    if not Oxygen.gpu then return end
+    Oxygen.gpu.fill(1, Oxygen.input_row, Oxygen.w, 1, " ")
+    Oxygen.gpu.set(1, Oxygen.input_row, "> " .. buffer .. "_")
+  end
+  
+  redraw()
+  while true do
+    local sig = {hw.computer.pullSignal()}
+    if sig[1] == "key_down" then
+      local char = sig[3]
+      if char == 13 then -- Enter
+        Oxygen.gpu.fill(1, Oxygen.input_row, Oxygen.w, 1, " ")
+        Oxygen.gpu.set(1, Oxygen.input_row, "> " .. buffer)
+        Oxygen.ttyPrint("> " .. buffer)
+        return buffer
+      elseif char == 8 then -- Backspace
+        if #buffer > 0 then buffer = hw.unicode.sub(buffer, 1, -2) end
+        redraw()
+      elseif char >= 32 and char <= 126 then
+        buffer = buffer .. hw.unicode.char(char)
+        redraw()
+      end
     end
   end
 end
 
--- [6] INIT
-Oxygen.log("Kernel Loaded. Starting Init (Shell)...")
+-- [9] INIT SEQUENCE
+Oxygen.ttyPrint("OxygenOS Kernel v0.5 (Net/Spawn/Stable)")
+Oxygen.ttyPrint("Mounting /dev... Done.")
+Oxygen.ttyPrint("Starting Init...")
+
+-- Запускаем Shell как главный процесс
 Oxygen.exec("/bin/sh.lua")
 
 -- Если Shell упадет, ядро останется здесь
-while true do
-  hw.computer.pullSignal()
-end
+while true do hw.computer.pullSignal() end
