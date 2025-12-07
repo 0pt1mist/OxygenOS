@@ -1,11 +1,13 @@
 return {
   core = {
-    kernel = { version = "0.7.0", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
-    shell  = { version = "2.3.0", path = "bin/sh.lua",      dest = "/bin/sh.lua" },
-    login  = { version = "1.1.0", path = "bin/login",       dest = "/bin/login" },
-    emerge = { version = "1.0.2", path = "bin/emerge",      dest = "/bin/emerge" },
-    nano   = { version = "1.0.0", path = "bin/nano",        dest = "/bin/nano" }
+    kernel  = { version = "0.8.0", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
+    shell   = { version = "2.3.0", path = "bin/sh.lua",      dest = "/bin/sh.lua" },
+    login   = { version = "1.1.0", path = "bin/login",       dest = "/bin/login" },
+    emerge  = { version = "1.0.2", path = "bin/emerge",      dest = "/bin/emerge" },
+    nano    = { version = "1.0.0", path = "bin/nano",        dest = "/bin/nano" },
+    driver  = { version = "0.1.0", path = "lib/driver",      dest = "/lib/driver" }
   },
   apps = {
+    ae-test = { version = "1.0.0", path = "portage/aetest",  dest = "/bin/ae-test" }
   }
 }

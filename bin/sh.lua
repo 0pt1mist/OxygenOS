@@ -49,7 +49,7 @@ while true do
     local arg1 = parts[2]
     
     if cmd == "exit" then
-      exit() -- Выход в Login
+      exit()
     elseif cmd == "cd" then
       if not arg1 then current_dir = "/" else
         local new = resolvePath(arg1)

@@ -1,5 +1,5 @@
 -- Oxygen Login Manager (Graphical TUI)
--- v1.1: Custom input fields, No scrolling artifacts
+
 
 local C_BG = 0x000000
 local C_FG = 0xFFFFFF

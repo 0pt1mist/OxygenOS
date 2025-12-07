@@ -46,18 +46,17 @@ end
 
 print("Installing to " .. disk.address .. "...")
 
--- 2. Создание структуры папок
 print("Creating directories...")
 local dirs = {
   "/boot", 
   "/bin", 
-  "/dev",       -- Для монтирования устройств ядром
+  "/dev",
   "/etc", 
-  "/etc/oxygen", -- Для базы данных пакетов
+  "/etc/oxygen",
   "/home", 
   "/lib", 
   "/usr", 
-  "/var",       -- Для кэша emerge
+  "/var",
   "/tmp"
 }
 
@@ -67,12 +66,10 @@ for _, d in ipairs(dirs) do
   end
 end
 
--- 3. Скачивание файлов
 for _, file in ipairs(file_list) do
   local url = REPO_URL .. file.remote
   print("Downloading " .. file.remote .. " ...")
   
-  -- Запрос к GitHub
   local handle, err = internet.request(url)
   
   if handle then
@@ -81,8 +78,6 @@ for _, file in ipairs(file_list) do
       content = content .. chunk 
     end
     
-    -- Проверка на 404 (GitHub возвращает строку "404: Not Found" в теле, если файл не raw, 
-    -- но так как мы берем raw, если файла нет, handle обычно закрывается или возвращает ошибку)
     if #content < 10 and string.find(content, "404") then
       print("ERROR: File not found on GitHub (404): " .. file.remote)
     else
