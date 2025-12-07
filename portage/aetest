@@ -1,0 +1,46 @@
+-- /bin/aetest.lua
+local driver = sys.include("driver")
+
+print("=== AE2 DIAGNOSTIC TOOL ===")
+
+-- 1. ТЕСТ КОНТРОЛЛЕРА
+print("\n[1] Testing Controller...")
+local ctrl = driver.find("me_controller")
+
+if ctrl then
+  print("Object Type: " .. type(ctrl))
+  
+  -- Оборачиваем вызов в pcall, чтобы увидеть ошибку, если она есть
+  print("Calling getStoredPower()...")
+  local ok, res = pcall(ctrl.getStoredPower)
+  
+  if ok then
+    print("SUCCESS: Power = " .. tostring(res))
+  else
+    print("CRASH: " .. tostring(res))
+  end
+else
+  print("SKIP: Controller not found")
+end
+
+-- 2. ТЕСТ ИНТЕРФЕЙСА
+print("\n[2] Testing Interface...")
+local int = driver.find("me_interface")
+
+if int then
+  print("Calling getItemsInNetwork()...")
+  local ok, items = pcall(int.getItemsInNetwork)
+  
+  if ok then
+    print("SUCCESS: Got table. Items count: " .. #items)
+    if #items > 0 then
+       print("First item: " .. tostring(items[1].label))
+    end
+  else
+    print("CRASH: " .. tostring(items))
+  end
+else
+  print("SKIP: Interface not found")
+end
+
+print("\n=== TEST COMPLETE ===")

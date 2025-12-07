@@ -1,40 +1,34 @@
--- Driver API for OxygenOS
--- Использование: local driver = sys.include("driver")
+-- /lib/driver.lua
 local driver = {}
 
--- Поиск первого компонента по типу (как component.list + proxy)
 function driver.find(type_name)
+  print("[DEBUG] Searching for: " .. type_name)
   local list = sys.ls("/dev")
+  
   for _, dev in pairs(list) do
-    -- dev выглядит как "me_interface-a1b..."
-    -- Проверяем, начинается ли строка с type_name
+    -- Проверяем совпадение начала строки
     if string.sub(dev, 1, #type_name) == type_name then
-       -- Извлекаем UUID из названия (или просто берем dev, т.к. sys.device понимает начало UUID)
-       -- Наш ls возвращает "type-uuid_start", нам нужно передать uuid_start в sys.device
+       print("[DEBUG] Match found: " .. dev)
+       
+       -- Ищем тире
        local dash_pos = string.find(dev, "-")
        if dash_pos then
           local uuid_part = string.sub(dev, dash_pos + 1)
-          return sys.device(uuid_part)
+          print("[DEBUG] Extracted ID: " .. uuid_part)
+          
+          -- Пытаемся получить прокси
+          local proxy, err = sys.device(uuid_part)
+          if proxy then
+             print("[DEBUG] Proxy obtained successfully!")
+             return proxy
+          else
+             print("[DEBUG] Failed to get proxy: " .. tostring(err))
+          end
        end
     end
   end
+  print("[DEBUG] " .. type_name .. " not found.")
   return nil
-end
-
--- Получить все компоненты данного типа
-function driver.findAll(type_name)
-  local results = {}
-  local list = sys.ls("/dev")
-  for _, dev in pairs(list) do
-    if string.sub(dev, 1, #type_name) == type_name then
-       local dash_pos = string.find(dev, "-")
-       if dash_pos then
-          local uuid_part = string.sub(dev, dash_pos + 1)
-          table.insert(results, sys.device(uuid_part))
-       end
-    end
-  end
-  return results
 end
 
 return driver
