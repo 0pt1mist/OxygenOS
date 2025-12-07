@@ -1,52 +1,115 @@
--- Oxygen Login Manager
--- Читает /etc/passwd.ocf
+-- Oxygen Login Manager (Graphical TUI)
+-- v1.1: Custom input fields, No scrolling artifacts
+
+local C_BG = 0x000000
+local C_FG = 0xFFFFFF
+local C_ACCENT = 0x00FF00
+local C_ERR = 0xFF0000
+
+local w, h = sys.gpu.res()
+
+local function clear()
+  sys.gpu.color(C_FG, C_BG)
+  sys.gpu.fill(1, 1, w, h, " ")
+end
+
+local function center(y, text, color)
+  if color then sys.gpu.color(color, C_BG) end
+  local x = math.floor((w - unicode.len(text)) / 2)
+  sys.gpu.set(x, y, text)
+end
+
+local function inputField(label, y, is_pass)
+  local label_x = math.floor(w / 2) - 10
+  local input_x = label_x + unicode.len(label)
+  
+  sys.gpu.color(C_FG, C_BG)
+  sys.gpu.set(label_x, y, label)
+  
+  local buffer = ""
+  
+  while true do
+    sys.gpu.fill(input_x, y, 20, 1, " ") 
+    sys.gpu.set(input_x, y, is_pass and string.rep("*", unicode.len(buffer)) or buffer)
+    
+    sys.gpu.set(input_x + unicode.len(buffer), y, "_")
+    
+    local sig = {sys.pull(math.huge)}
+    if sig[1] == "key_down" then
+      local char = sig[3]
+      local code = sig[4]
+      
+      if char == 13 then
+        sys.gpu.set(input_x + unicode.len(buffer), y, " ")
+        return buffer
+      elseif char == 8 then
+        if unicode.len(buffer) > 0 then
+          buffer = unicode.sub(buffer, 1, -2)
+        end
+      elseif char >= 32 then
+        if unicode.len(buffer) < 18 then
+          buffer = buffer .. unicode.char(char)
+        end
+      end
+    end
+  end
+end
 
 local function loadUsers()
   local data = sys.read("/etc/passwd.ocf")
   if not data then return nil end
-  -- Безопасный парсинг OCF (Lua table)
   local f = load("return " .. data)
   if f then return f() else return nil end
 end
 
--- Рисуем UI
-sys.gpu.color(0xFFFFFF, 0x000000)
-sys.gpu.fill(1, 1, 80, 25, " ")
-sys.gpu.set(35, 10, "OxygenOS Login")
+-- == MAIN LOOP ==
 
 while true do
-  print("\nAuthenticate required.")
-  sys.gpu.set(1, 12, "User: ")
-  local username = readln()
+  clear()
   
-  sys.gpu.set(1, 13, "Pass: ")
-  -- readln со звездочкой (поддержка добавлена в kernel v0.7)
-  local password = readln("*") 
+  sys.gpu.color(C_ACCENT, C_BG)
+  center(h/2 - 6, "  Oxygen OS  ")
+  sys.gpu.color(C_FG, C_BG)
+  center(h/2 - 5, "=============")
+  
+  
+  local username = inputField("User: ", h/2 - 2, false)
+  local password = inputField("Pass: ", h/2 - 1, true)
+  
+  center(h/2 + 2, "Verifying...", 0xAAAAAA)
+  
+
+  sys.pull(0.5)
   
   local users = loadUsers()
+  local success = false
+  local err_msg = ""
   
   if users and users[username] then
-    local userData = users[username]
-    if userData.pass == password then
-      print("Welcome, " .. username .. "!")
+    if users[username].pass == password then
+      -- SUCCESS
+      center(h/2 + 2, " Access Granted ", C_ACCENT)
+      sys.pull(0.5)
       
-      -- Применяем права пользователя
-      local ok, err = sys.setuid(userData.uid, username)
-      
+      local ok, err = sys.setuid(users[username].uid, username)
       if ok then
-        -- Запускаем оболочку
+        clear()
+        print("Starting Shell...")
         spawn("/bin/sh.lua")
-        -- Когда юзер пишет 'exit' в shell, мы попадаем сюда
-        exit() -- Завершаем login, ядро перезапустит его
+        success = true
       else
-        print("Login Error: " .. tostring(err))
+        err_msg = "UID Error: " .. tostring(err)
       end
     else
-      print("Incorrect password.")
+      err_msg = "Invalid Password"
     end
   else
-    print("Unknown user.")
+    err_msg = "Unknown User"
   end
   
-  sys.pull(1) -- Задержка перед повторной попыткой
+  if not success then
+    center(h/2 + 2, " " .. err_msg .. " ", C_ERR)
+    sys.pull(1.5)
+  end
+  
 end

@@ -2,7 +2,7 @@ return {
   core = {
     kernel = { version = "0.7.0", path = "boot/kernel.lua", dest = "/boot/kernel.lua" },
     shell  = { version = "2.3.0", path = "bin/sh.lua",      dest = "/bin/sh.lua" },
-    login  = { version = "1.0.0", path = "bin/login",       dest = "/bin/login" },
+    login  = { version = "1.1.0", path = "bin/login",       dest = "/bin/login" },
     emerge = { version = "1.0.2", path = "bin/emerge",      dest = "/bin/emerge" },
     nano   = { version = "1.0.0", path = "bin/nano",        dest = "/bin/nano" }
   },
