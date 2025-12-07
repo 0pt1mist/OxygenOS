@@ -1,43 +1,42 @@
--- OxygenOS AE2 Monitor v2.1 (Fixes)
+-- OxygenOS AE2 Monitor v2.2 (SAFE DEBUG MODE)
 local driver = sys.include("driver")
 local w, h = sys.gpu.res()
 
--- Цвета
+print("DEBUG: Loaded driver.")
+
+-- == WRAPPER START ==
+-- Оборачиваем весь код в защищенный блок
+local function main()
+
+print("DEBUG: [1] Setup variables")
+
+-- Colors
 local C_BG = 0x000000
 local C_FG = 0xFFFFFF
 local C_ACCENT = 0x00AA00
-local C_WARN = 0xFFAA00
 local C_ERR = 0xFF0000
 local C_GRAPH_BAR = 0x00FFFF
 local C_GRAPH_BG = 0x222222
 local C_Box = 0xFFFFFF
 
--- == ПОДКЛЮЧЕНИЕ ==
 local controller = driver.find("me_controller")
 local interface = driver.find("me_interface")
 
--- Переменные
+print("DEBUG: [2] Devices found: Ctrl=" .. tostring(controller) .. " Int=" .. tostring(interface))
+
 local scroll_offset = 0
 local items_list = {}
 local power_history = {}
 local GRAPH_WIDTH = 30
 for i=1, GRAPH_WIDTH do power_history[i] = 0 end
 
--- ТАЙМЕР ЧЕРЕЗ СЧЕТЧИК
--- Мы обновляемся раз в 20 тиков цикла. 
--- При pull(0.1) это примерно раз в 2-3 секунды реального времени.
 local update_timer = 100 
 local UPDATE_THRESHOLD = 20 
 
--- == ФУНКЦИИ ==
-
-local function clear()
-  sys.gpu.color(C_FG, C_BG)
-  sys.gpu.fill(1, 1, w, h, " ")
-end
-
+-- Helpers
 local function drawBox(x, y, bw, bh, title)
-  sys.gpu.color(C_Box, C_BG)
+  sys.gpu.setBackground(C_BG)
+  sys.gpu.setForeground(C_Box)
   sys.gpu.fill(x, y, bw, 1, "-")
   sys.gpu.fill(x, y+bh-1, bw, 1, "-")
   sys.gpu.fill(x, y, 1, bh, "|")
@@ -46,20 +45,14 @@ local function drawBox(x, y, bw, bh, title)
 end
 
 local function formatNum(n)
-  if type(n) ~= "number" then return "ERR" end
-  if n >= 1000000000 then return string.format("%.1fB", n/1000000000) end
+  if type(n) ~= "number" then return "0" end
   if n >= 1000000 then return string.format("%.1fM", n/1000000) end
   if n >= 1000 then return string.format("%.1fk", n/1000) end
   return tostring(math.floor(n))
 end
 
-local function formatUsage(n)
-  if type(n) ~= "number" then return "ERR" end
-  return string.format("%.2f", n)
-end
-
 local function drawGraph(x, y, gw, gh, data, maxVal)
-  sys.gpu.color(C_GRAPH_BAR, C_GRAPH_BG)
+  sys.gpu.setBackground(C_GRAPH_BG)
   sys.gpu.fill(x, y, gw, gh, " ")
   if maxVal <= 0 then maxVal = 1 end
   for i = 1, gw do
@@ -67,33 +60,32 @@ local function drawGraph(x, y, gw, gh, data, maxVal)
     local barH = math.floor((val / maxVal) * gh)
     if barH > gh then barH = gh end
     if barH > 0 then
-      sys.gpu.color(C_GRAPH_BAR, C_GRAPH_BG)
+      sys.gpu.setBackground(C_GRAPH_BG)
+      sys.gpu.setForeground(C_GRAPH_BAR)
       sys.gpu.fill(x + i - 1, y + gh - barH, 1, barH, "|")
     end
   end
-  sys.gpu.color(C_FG, C_BG)
+  sys.gpu.setBackground(C_BG)
+  sys.gpu.setForeground(C_FG)
 end
 
--- == MAIN LOOP ==
-clear()
-print("Starting Monitor...")
+print("DEBUG: [3] Entering Loop")
+sys.gpu.fill(1, 1, w, h, " ") -- Clear once
 
 local pStored, pMax, pUsage = 0, 0, 0
-local status_msg = "Init..."
+local status_msg = "Init"
 
 while true do
-  -- 1. СБОР ДАННЫХ (По счетчику)
+  -- [4] UPDATE
   update_timer = update_timer + 1
   
   if update_timer > UPDATE_THRESHOLD then
-    -- Очистка памяти перед тяжелой работой (помогает от лагов)
-    collectgarbage() 
-    
-    status_msg = "Updating..."
+    collectgarbage()
+    status_msg = "Upd..."
     
     if controller then
        local ok, res = pcall(controller.getStoredPower)
-       if ok then pStored = res else pStored = -1 end -- -1 покажет ошибку
+       if ok then pStored = res else pStored = -1 end
        
        ok, res = pcall(controller.getMaxStoredPower)
        if ok then pMax = res else pMax = -1 end
@@ -106,75 +98,46 @@ while true do
     end
     
     if interface then
-       -- Сортировка может падать если мало RAM, добавим защиту
+       -- [CRITICAL POINT] Sort
        local ok, list = pcall(interface.getItemsInNetwork)
        if ok and list then
-         local sort_ok = pcall(table.sort, list, function(a,b) return a.size > b.size end)
-         items_list = list
-         if not sort_ok then status_msg = "Sort Error (Low RAM?)" end
-       else
-         status_msg = "AE2 Link Error"
+          -- Проверка сортировки
+          local sort_ok, sort_err = pcall(table.sort, list, function(a,b) return a.size > b.size end)
+          if sort_ok then items_list = list else status_msg = "SortErr" end
        end
     end
-    
     update_timer = 0
   else
     status_msg = "Idle"
   end
 
-  -- 2. ОТРИСОВКА (Каждый кадр)
+  -- [5] DRAWING
+  sys.gpu.setBackground(C_BG)
+  sys.gpu.setForeground(C_FG)
   
-  -- Хедер
-  sys.gpu.color(C_FG, 0x333333)
+  -- Header
   sys.gpu.fill(1, 1, w, 1, " ")
-  sys.gpu.set(1, 1, " OxygenOS AE2 Monitor v2.1")
-  sys.gpu.set(w-20, 1, "[Q] to Exit | " .. status_msg)
-
-  -- POWER STATS
-  drawBox(2, 3, 35, 8, "Power Stats")
-  sys.gpu.color(C_FG, C_BG)
+  sys.gpu.set(1, 1, "Debug Monitor | " .. status_msg)
+  
+  -- Stats
+  drawBox(2, 3, 35, 8, "Power")
   if controller then
-    if pStored == -1 then
-      sys.gpu.color(C_ERR, C_BG)
-      sys.gpu.set(4, 5, "DATA ERROR (Check Link)")
-    else
-      sys.gpu.set(4, 5, "Usage:  " .. formatUsage(pUsage) .. " AE/t")
-      sys.gpu.set(4, 6, "Stored: " .. formatNum(pStored))
-      sys.gpu.set(4, 7, "Max:    " .. formatNum(pMax))
-      
-      local pct = 0
-      if pMax > 0 then pct = math.floor((pStored/pMax)*100) end
-      sys.gpu.set(4, 9, "Battery: " .. pct .. "%")
-    end
-  else
-    sys.gpu.color(C_ERR, C_BG)
-    sys.gpu.set(4, 6, "NO CONTROLLER")
+     sys.gpu.set(4, 5, "Store: " .. formatNum(pStored))
   end
-
-  -- USAGE GRAPH
+  
+  -- Graph
   local graph_x = 39
   local graph_w = w - graph_x - 1
-  if graph_w ~= GRAPH_WIDTH then GRAPH_WIDTH = graph_w end 
+  drawBox(graph_x, 3, graph_w+2, 8, "Graph")
   
-  drawBox(graph_x, 3, graph_w + 2, 8, "Usage Graph")
-  if controller then
-    local graphMax = 100
-    for _, v in pairs(power_history) do if v > graphMax then graphMax = v end end
-    drawGraph(graph_x + 1, 4, graph_w, 6, power_history, graphMax)
-  else
-    sys.gpu.set(graph_x+2, 6, "Waiting...")
-  end
+  local gMax = 100
+  for _,v in pairs(power_history) do if v > gMax then gMax = v end end
+  drawGraph(graph_x+1, 4, graph_w, 6, power_history, gMax)
 
-  -- ITEMS LIST
+  -- List
   local list_y = 12
   local list_h = h - list_y - 1
-  drawBox(2, list_y, w-2, list_h + 2, "Items (" .. #items_list .. ")")
-  
-  sys.gpu.color(0xAAAAAA, C_BG)
-  sys.gpu.set(4, list_y + 1, "Name")
-  sys.gpu.set(w - 10, list_y + 1, "Count")
-  sys.gpu.fill(3, list_y + 2, w-4, 1, "-")
-  sys.gpu.color(C_FG, C_BG)
+  drawBox(2, list_y, w-2, list_h+2, "Items")
   
   local view_size = list_h - 3
   if view_size < 1 then view_size = 1 end
@@ -184,47 +147,33 @@ while true do
     local item = items_list[idx]
     local yPos = list_y + 2 + i
     sys.gpu.fill(3, yPos, w-4, 1, " ")
-    
     if item then
-      local name = item.label or "Unknown"
-      local max_name_len = w - 16
-      if #name > max_name_len then name = string.sub(name, 1, max_name_len) .. ".." end
-      
-      sys.gpu.set(4, yPos, name)
-      sys.gpu.set(w - 10, yPos, formatNum(item.size))
+       local label = item.label or "??"
+       sys.gpu.set(4, yPos, string.sub(label, 1, 20))
+       sys.gpu.set(w-10, yPos, formatNum(item.size))
     end
-  end
-  
-  -- Scrollbar
-  if #items_list > view_size then
-    local bar_h = math.floor((view_size / #items_list) * view_size)
-    if bar_h < 1 then bar_h = 1 end
-    local bar_y = math.floor((scroll_offset / #items_list) * view_size)
-    sys.gpu.color(C_ACCENT, C_BG)
-    sys.gpu.fill(w-1, list_y + 3 + bar_y, 1, bar_h, "|")
   end
 
-  -- 3. INPUT
+  -- [6] INPUT
   local sig = {sys.pull(0.1)}
-  local event = sig[1]
   local code = sig[4]
-  
-  if event == "key_down" then
-    -- ВЫХОД: Q (16) или Ctrl+C/C (46)
-    if code == 16 or code == 46 then break end
-    
-    if code == 200 and scroll_offset > 0 then scroll_offset = scroll_offset - 1 end -- UP
-    if code == 208 and scroll_offset < (#items_list - view_size) then scroll_offset = scroll_offset + 1 end -- DOWN
-    if code == 201 then scroll_offset = scroll_offset - view_size; if scroll_offset < 0 then scroll_offset = 0 end end -- PGUP
-    if code == 209 then scroll_offset = scroll_offset + view_size; if scroll_offset > (#items_list - view_size) then scroll_offset = #items_list - view_size end end -- PGDN
-  elseif event == "scroll" then
-    if sig[5] > 0 then
-      if scroll_offset > 0 then scroll_offset = scroll_offset - 1 end
-    else
-       if scroll_offset < (#items_list - view_size) then scroll_offset = scroll_offset + 1 end
-    end
+  if sig[1] == "key_down" then
+    if code == 16 or code == 46 then break end -- Exit
+    if code == 200 and scroll_offset > 0 then scroll_offset = scroll_offset - 1 end
+    if code == 208 then scroll_offset = scroll_offset + 1 end
   end
 end
 
-clear()
-print("Exited.")
+end -- End main
+
+-- Запускаем main() и ловим ошибку
+local status, err = xpcall(main, debug.traceback)
+if not status then
+  sys.gpu.setBackground(0x000000)
+  sys.gpu.setForeground(0xFF0000)
+  print("\nCRASH REPORT:")
+  print(err)
+  print("Check the line number above.")
+else
+  print("\nExited normally.")
+end
