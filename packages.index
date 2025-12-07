@@ -8,6 +8,6 @@ return {
     driver  = { version = "0.1.0", path = "lib/driver.lua",      dest = "/lib/driver.lua" }
   },
   apps = {
-    ["ae-test"] = { version = "1.0.0", path = "portage/aetest.lua",  dest = "/bin/ae-test" }
+    ["aemon"] = { version = "1.0.0", path = "portage/aemon",  dest = "/bin/aemon" }
   }
 }
