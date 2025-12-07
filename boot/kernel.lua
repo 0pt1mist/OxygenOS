@@ -193,46 +193,41 @@ Syscalls.list = function(path)
   return hw.component.invoke(boot_addr, "list", path)
 end
 
--- В /boot/kernel.lua
-
--- [ИЩИ ЭТУ ФУНКЦИЮ И ЗАМЕНИ ЕЁ ЦЕЛИКОМ]
 Syscalls.device = function(dev_id)
-  -- 1. Отладка входящих данных
+  -- 1. Логирование
   Oxygen.ttyPrint("[KERN] Requesting device ID: " .. tostring(dev_id))
   
   if not dev_id then return nil, "No ID provided" end
 
-  -- 2. Безопасное получение полного адреса
-  -- component.get может упасть, если ID некорректен, поэтому оборачиваем в pcall
-  local ok_addr, full_addr = pcall(hw.component.get, dev_id)
+  -- 2. Ручной поиск полного адреса (вместо несуществующего component.get)
+  local full_addr = nil
   
-  if not ok_addr then
-    Oxygen.ttyPrint("[KERN] CRASH in component.get: " .. tostring(full_addr))
-    return nil, "Syscall Error (get)"
+  -- Перебираем все подключенные компоненты
+  for addr, type in hw.component.list() do
+    -- Если адрес начинается с того, что мы ищем (например "5bd" совпадает с началом "5bd2a...")
+    if string.sub(addr, 1, #dev_id) == dev_id then
+      full_addr = addr
+      break
+    end
   end
 
   if not full_addr then 
-    Oxygen.ttyPrint("[KERN] Address not found for ID: " .. tostring(dev_id))
+    Oxygen.ttyPrint("[KERN] Address not found for partial ID: " .. tostring(dev_id))
     return nil, "Device not found" 
   end
 
-  Oxygen.ttyPrint("[KERN] Resolved Address: " .. tostring(full_addr))
+  Oxygen.ttyPrint("[KERN] Resolved: " .. full_addr)
 
-  -- 3. Безопасное создание прокси
-  -- component.proxy может упасть, если адрес не существует или мало RAM
+  -- 3. Создание прокси (теперь у нас точно есть полный адрес)
   local ok_proxy, proxy = pcall(hw.component.proxy, full_addr)
   
   if not ok_proxy then
-     Oxygen.ttyPrint("[KERN] CRASH in component.proxy: " .. tostring(proxy))
+     Oxygen.ttyPrint("[KERN] CRASH inside proxy(): " .. tostring(proxy))
      return nil, "Syscall Error (proxy)"
   end
 
-  if not proxy then
-    Oxygen.ttyPrint("[KERN] Proxy is nil (Unknown Error)")
-    return nil, "Proxy failed"
-  end
+  if not proxy then return nil, "Proxy failed" end
 
-  Oxygen.ttyPrint("[KERN] Proxy created successfully.")
   return proxy
 end
 
