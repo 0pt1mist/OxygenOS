@@ -5,9 +5,9 @@ return {
     login   = { version = "1.1.0", path = "bin/login",       dest = "/bin/login" },
     emerge  = { version = "1.0.2", path = "bin/emerge",      dest = "/bin/emerge" },
     nano    = { version = "1.0.0", path = "bin/nano",        dest = "/bin/nano" },
-    driver  = { version = "0.1.0", path = "lib/driver",      dest = "/lib/driver" }
+    driver  = { version = "0.1.0", path = "lib/driver.lua",      dest = "/lib/driver.lua" }
   },
   apps = {
-    ae-test = { version = "1.0.0", path = "portage/aetest",  dest = "/bin/ae-test" }
+    ["ae-test"] = { version = "1.0.0", path = "portage/aetest.lua",  dest = "/bin/ae-test" }
   }
 }
