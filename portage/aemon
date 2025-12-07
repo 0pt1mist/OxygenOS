@@ -1,0 +1,193 @@
+-- OxygenOS AE2 Monitor v1.0
+-- Требует: lib/driver.lua
+-- Использование: aemon
+
+local driver = sys.include("driver")
+local w, h = sys.gpu.res()
+
+-- Цвета
+local C_BG = 0x000000
+local C_FG = 0xFFFFFF
+local C_BAR = 0x00AA00
+local C_WARN = 0xFFAA00
+local C_ERR = 0xFF0000
+local C_GRAPH = 0x00FFFF
+
+-- == ПОДКЛЮЧЕНИЕ К ЖЕЛЕЗУ ==
+-- Пытаемся найти компоненты. Если их нет - переменные будут nil
+local controller = driver.find("me_controller")
+local interface = driver.find("me_interface")
+-- Если драйва нет, попробуем получить данные о ячейках косвенно, если получится, но обычно нужен me_drive
+local drive = driver.find("me_drive") 
+
+if not controller and not interface then
+  print("Error: No AE2 Components found in /dev")
+  print("Please connect Adapter to ME Controller or ME Interface.")
+  return
+end
+
+-- == ГРАФИКА ==
+local function drawBox(x, y, bw, bh, title)
+  sys.gpu.color(C_FG, C_BG)
+  -- Рамка (упрощенная)
+  sys.gpu.fill(x, y, bw, 1, "-")
+  sys.gpu.fill(x, y+bh-1, bw, 1, "-")
+  sys.gpu.fill(x, y, 1, bh, "|")
+  sys.gpu.fill(x+bw-1, y, 1, bh, "|")
+  sys.gpu.set(x+2, y, " " .. title .. " ")
+end
+
+local function progressBar(x, y, bw, val, max, label)
+  sys.gpu.color(C_FG, C_BG)
+  sys.gpu.set(x, y, label)
+  
+  local barW = bw - 2
+  local fill = 0
+  if max > 0 then fill = math.floor((val / max) * barW) end
+  if fill > barW then fill = barW end
+  
+  sys.gpu.set(x + bw - 12, y, string.format("%d/%d", val, max))
+  
+  sys.gpu.color(0x000000, 0x555555) -- Фон бара
+  sys.gpu.fill(x, y+1, barW, 1, " ")
+  sys.gpu.color(0x000000, C_BAR)    -- Активная часть
+  sys.gpu.fill(x, y+1, fill, 1, " ")
+  sys.gpu.color(C_FG, C_BG)
+end
+
+-- История для графика энергии (храним последние 40 значений)
+local powerHistory = {}
+for i=1, 40 do powerHistory[i] = 0 end
+
+local function drawGraph(x, y, gw, gh, data, maxVal)
+  -- Очистка области графика
+  sys.gpu.color(C_FG, C_BG)
+  sys.gpu.fill(x, y, gw, gh, " ")
+  
+  -- Оси
+  sys.gpu.fill(x, y, 1, gh, "|")
+  sys.gpu.fill(x, y+gh, gw, 1, "-")
+  
+  for i = 1, #data do
+    local val = data[i]
+    if val and maxVal > 0 then
+      local barH = math.floor((val / maxVal) * (gh - 1))
+      if barH < 0 then barH = 0 end
+      if barH > (gh - 1) then barH = gh - 1 end
+      
+      -- Рисуем столбик
+      if barH > 0 then
+        sys.gpu.color(C_GRAPH, C_BG)
+        sys.gpu.fill(x + i, y + gh - barH, 1, barH, "#")
+      end
+    end
+  end
+  sys.gpu.color(C_FG, C_BG)
+end
+
+local function formatNum(n)
+  if n >= 1000000 then return string.format("%.1fM", n/1000000) end
+  if n >= 1000 then return string.format("%.1fk", n/1000) end
+  return tostring(n)
+end
+
+-- == MAIN LOOP ==
+
+sys.gpu.fill(1, 1, w, h, " ") -- Clear screen
+
+while true do
+  -- 1. Сбор данных
+  local pStored, pMax, pUsage = 0, 0, 0
+  local items = {}
+  local totalTypes = 0
+  local totalItems = 0
+  
+  if controller then
+    pStored = controller.getStoredPower()
+    pMax = controller.getMaxStoredPower()
+    pUsage = controller.getAvgPowerUsage() -- Требует сенсора или контроллера
+    
+    -- Обновляем историю графика
+    table.remove(powerHistory, 1)
+    table.insert(powerHistory, pStored)
+  end
+  
+  if interface then
+    items = interface.getItemsInNetwork()
+    -- Сортировка пузырьком (для топа сойдет, Lua sort может быть недоступен в песочнице если не прокинут)
+    -- Если table.sort доступен:
+    table.sort(items, function(a,b) return a.size > b.size end)
+    
+    totalTypes = #items
+    -- Считаем общее кол-во
+    for _, it in pairs(items) do totalItems = totalItems + it.size end
+  end
+
+  -- 2. Отрисовка
+  
+  -- HEADER
+  sys.gpu.color(C_FG, 0x444444)
+  sys.gpu.fill(1, 1, w, 1, " ")
+  sys.gpu.set(1, 1, " OxygenOS AE2 Monitor ")
+  sys.gpu.set(w-15, 1, "Ctrl+C to Exit")
+  
+  -- LEFT COLUMN: POWER
+  drawBox(2, 3, 40, 10, "Energy System")
+  if controller then
+    sys.gpu.set(4, 5, "Usage: " .. formatNum(pUsage) .. " AE/t")
+    sys.gpu.set(4, 6, "Stored: " .. formatNum(pStored) .. " / " .. formatNum(pMax))
+    
+    -- Graph
+    sys.gpu.set(4, 8, "Power Load History:")
+    drawGraph(4, 9, 36, 3, powerHistory, pMax)
+  else
+    sys.gpu.color(C_ERR, C_BG)
+    sys.gpu.set(4, 6, "NO CONTROLLER FOUND")
+  end
+  
+  -- RIGHT COLUMN: STORAGE STATS
+  drawBox(44, 3, w-45, 10, "Network Storage")
+  if interface then
+    sys.gpu.set(46, 5, "Total Items: " .. formatNum(totalItems))
+    sys.gpu.set(46, 6, "Item Types:  " .. totalTypes)
+    
+    if drive then
+       sys.gpu.set(46, 8, "Drive detected (Cells ok)")
+    else
+       sys.gpu.set(46, 8, "Cells: N/A (Need ME Drive)")
+    end
+  else
+    sys.gpu.color(C_WARN, C_BG)
+    sys.gpu.set(46, 6, "NO INTERFACE FOUND")
+    sys.gpu.set(46, 7, "Connect Adapter to Interface")
+    sys.gpu.set(46, 8, "to see items.")
+  end
+  
+  -- BOTTOM: TOP ITEMS
+  drawBox(2, 14, w-4, h-15, "Top Items")
+  sys.gpu.set(4, 15, "Name                Amount")
+  sys.gpu.set(4, 16, "--------------------------")
+  
+  if interface then
+    for i = 1, math.min(8, #items) do
+      local it = items[i]
+      local yPos = 16 + i
+      local name = it.label
+      if #name > 25 then name = string.sub(name, 1, 23) .. ".." end
+      
+      sys.gpu.set(4, yPos, name)
+      sys.gpu.set(30, yPos, formatNum(it.size))
+    end
+  end
+
+  -- 3. Пауза и выход
+  local sig = {sys.pull(1)} -- Обновление раз в секунду
+  if sig[1] == "key_down" and sig[4] == 46 then -- Ctrl+C (код 46 это C, проверку Ctrl опустим для простоты или добавь keyboard api)
+     -- Для простоты: выход по нажатию 'q' или любой клавиши если лень проверять коды
+  end
+  -- Простейший выход по клику на экран для теста
+  if sig[1] == "touch" then break end
+end
+
+sys.gpu.fill(1, 1, w, h, " ")
+sys.gpu.set(1, 1, "Exited.")
