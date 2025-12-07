@@ -1,7 +1,7 @@
 local driver = sys.include("driver")
 
 print("Searching for ME Interface...")
-local me = driver.find("me_interface")
+local me = driver.find("me_controller-5bd")
 
 if me then
   print("Found ME Interface!")
