@@ -1,4 +1,4 @@
--- OxygenOS AE2 Monitor v2.0 (Scroll & Graph Fix)
+-- OxygenOS AE2 Monitor v2.1 (Ctrl+C Support)
 -- Требует: lib/driver.lua
 -- Использование: aemon
 
@@ -23,13 +23,16 @@ local interface = driver.find("me_interface")
 local scroll_offset = 0
 local items_list = {}
 local power_history = {}
-local GRAPH_WIDTH = 30 -- Ширина графика
--- Заполняем историю нулями
+local GRAPH_WIDTH = 30 
+-- Заполняем историю
 for i=1, GRAPH_WIDTH do power_history[i] = 0 end
 
--- Таймеры обновления данных (чтобы не лагало при прокрутке)
+-- Переменная для отслеживания нажатия Ctrl
+local is_ctrl = false
+
+-- Таймеры
 local last_update = 0
-local UPDATE_INTERVAL = 2 -- Обновлять данные из МЭ раз в 2 сек
+local UPDATE_INTERVAL = 0.1 -- Опрос МЭ раз в 2 сек
 
 -- == ФУНКЦИИ ОТРИСОВКИ ==
 
@@ -40,13 +43,10 @@ end
 
 local function drawBox(x, y, bw, bh, title)
   sys.gpu.color(C_Box, C_BG)
-  -- Горизонтали
   sys.gpu.fill(x, y, bw, 1, "-")
   sys.gpu.fill(x, y+bh-1, bw, 1, "-")
-  -- Вертикали
   sys.gpu.fill(x, y, 1, bh, "|")
   sys.gpu.fill(x+bw-1, y, 1, bh, "|")
-  -- Заголовки
   sys.gpu.set(x+2, y, " " .. title .. " ")
 end
 
@@ -57,29 +57,20 @@ local function formatNum(n)
   return tostring(math.floor(n))
 end
 
--- Красивый вывод с плавающей точкой
 local function formatUsage(n)
   return string.format("%.2f", n)
 end
 
--- График (теперь с проверкой границ!)
 local function drawGraph(x, y, gw, gh, data, maxVal)
-  -- Очистка фона графика
   sys.gpu.color(C_GRAPH_BAR, C_GRAPH_BG)
   sys.gpu.fill(x, y, gw, gh, " ")
-  
   if maxVal <= 0 then maxVal = 1 end
-
   for i = 1, gw do
-    -- Берем данные с конца (самые свежие справа)
     local val = data[#data - (gw - i)] or 0
-    
     local barH = math.floor((val / maxVal) * gh)
     if barH > gh then barH = gh end
-    
     if barH > 0 then
       sys.gpu.color(C_GRAPH_BAR, C_GRAPH_BG)
-      -- Рисуем снизу вверх
       sys.gpu.fill(x + i - 1, y + gh - barH, 1, barH, "|")
     end
   end
@@ -89,16 +80,14 @@ end
 -- == ОСНОВНОЙ ЦИКЛ ==
 clear()
 
--- Данные
 local pStored, pMax, pUsage = 0, 0, 0
 
 while true do
-  local uptime = os.clock() -- или sys.uptime если есть, используем os для таймера
+  local uptime = os.clock()
   
-  -- 1. СБОР ДАННЫХ (с троттлингом, чтобы не лагало управление)
+  -- 1. СБОР ДАННЫХ
   if uptime - last_update > UPDATE_INTERVAL then
     if controller then
-       -- pcall на случай сбоев сети
        local ok, res = pcall(controller.getStoredPower)
        if ok then pStored = res else pStored = 0 end
        
@@ -108,7 +97,6 @@ while true do
        ok, res = pcall(controller.getAvgPowerUsage)
        if ok then pUsage = res else pUsage = 0 end
        
-       -- Обновляем историю
        table.insert(power_history, pUsage)
        if #power_history > GRAPH_WIDTH then table.remove(power_history, 1) end
     end
@@ -117,7 +105,6 @@ while true do
        local ok, list = pcall(interface.getItemsInNetwork)
        if ok then
          items_list = list
-         -- Сортировка: Сначала по кол-ву, потом по имени
          table.sort(items_list, function(a,b) return a.size > b.size end)
        end
     end
@@ -125,22 +112,18 @@ while true do
   end
 
   -- 2. ОТРИСОВКА
-  
-  -- Хедер
   sys.gpu.color(C_FG, 0x333333)
   sys.gpu.fill(1, 1, w, 1, " ")
-  sys.gpu.set(1, 1, " OxygenOS AE2 Monitor v2.0")
-  sys.gpu.set(w-15, 1, "Arrows/Wheel")
+  sys.gpu.set(1, 1, " OxygenOS AE2 Monitor v2.1")
+  sys.gpu.set(w-15, 1, "Ctrl+C to Exit") -- Обновили подсказку
 
-  -- ЛЕВОЕ ОКНО: ЦИФРЫ ЭНЕРГИИ
+  -- Power Stats
   drawBox(2, 3, 35, 8, "Power Stats")
   sys.gpu.color(C_FG, C_BG)
   if controller then
     sys.gpu.set(4, 5, "Usage:  " .. formatUsage(pUsage) .. " AE/t")
     sys.gpu.set(4, 6, "Stored: " .. formatNum(pStored))
     sys.gpu.set(4, 7, "Max:    " .. formatNum(pMax))
-    
-    -- Процент заряда
     local pct = 0
     if pMax > 0 then pct = math.floor((pStored/pMax)*100) end
     sys.gpu.set(4, 9, "Battery: " .. pct .. "%")
@@ -149,24 +132,21 @@ while true do
     sys.gpu.set(4, 6, "NO CONTROLLER")
   end
 
-  -- ПРАВОЕ ОКНО: ГРАФИК ПОТРЕБЛЕНИЯ (Usage History)
+  -- Graph
   local graph_x = 39
   local graph_w = w - graph_x - 1
-  -- Обновляем размер буфера графика под ширину экрана
   if graph_w ~= GRAPH_WIDTH then GRAPH_WIDTH = graph_w end 
   
   drawBox(graph_x, 3, graph_w + 2, 8, "Usage Graph")
   if controller then
-    -- Определяем максимум для графика (динамический масштаб)
     local graphMax = 100
     for _, v in pairs(power_history) do if v > graphMax then graphMax = v end end
-    
     drawGraph(graph_x + 1, 4, graph_w, 6, power_history, graphMax)
   else
     sys.gpu.set(graph_x+2, 6, "Waiting data...")
   end
 
-  -- НИЖНЕЕ ОКНО: СПИСОК (SCROLLABLE)
+  -- List
   local list_y = 12
   local list_h = h - list_y - 1
   drawBox(2, list_y, w-2, list_h + 2, "Network Items (" .. #items_list .. ")")
@@ -178,30 +158,23 @@ while true do
   
   sys.gpu.color(C_FG, C_BG)
   
-  -- Отрисовка видимой части списка
-  local view_size = list_h - 3 -- минус заголовки и рамки
+  local view_size = list_h - 3
   if view_size < 1 then view_size = 1 end
   
   for i = 1, view_size do
     local idx = scroll_offset + i
     local item = items_list[idx]
     local yPos = list_y + 2 + i
-    
-    -- Очистка строки
     sys.gpu.fill(3, yPos, w-4, 1, " ")
-    
     if item then
       local name = item.label
-      -- Обрезка длинных имен
       local max_name_len = w - 16
       if #name > max_name_len then name = string.sub(name, 1, max_name_len) .. ".." end
-      
       sys.gpu.set(4, yPos, name)
       sys.gpu.set(w - 10, yPos, formatNum(item.size))
     end
   end
   
-  -- Скроллбар (визуальный)
   if #items_list > view_size then
     local bar_h = math.floor((view_size / #items_list) * view_size)
     if bar_h < 1 then bar_h = 1 end
@@ -210,42 +183,53 @@ while true do
     sys.gpu.fill(w-1, list_y + 3 + bar_y, 1, bar_h, "|")
   end
 
-  -- 3. ОБРАБОТКА ВВОДА (Input Handling)
-  -- Ждем события 0.1 сек (быстрый отклик интерфейса)
+  -- 3. ОБРАБОТКА ВВОДА
   local sig = {sys.pull(0.1)}
   local event = sig[1]
   
   if event == "key_down" then
     local code = sig[4]
     
-    if code == 200 then -- Стрелка ВВЕРХ
+    -- Проверка на Ctrl (код 29 - левый, 157 - правый)
+    if code == 29 or code == 157 then
+      is_ctrl = true
+    end
+    
+    -- Если Ctrl зажат и нажата 'C' (код 46) -> Выход
+    if is_ctrl and code == 46 then
+      break
+    end
+    
+    -- Навигация
+    if code == 200 then
       if scroll_offset > 0 then scroll_offset = scroll_offset - 1 end
-      
-    elseif code == 208 then -- Стрелка ВНИЗ
+    elseif code == 208 then
       if scroll_offset < (#items_list - view_size) then scroll_offset = scroll_offset + 1 end
-      
-    elseif code == 201 then -- Page Up
+    elseif code == 201 then
       scroll_offset = scroll_offset - view_size
       if scroll_offset < 0 then scroll_offset = 0 end
-      
-    elseif code == 209 then -- Page Down
+    elseif code == 209 then
       scroll_offset = scroll_offset + view_size
       if scroll_offset > (#items_list - view_size) then scroll_offset = #items_list - view_size end
     end
     
-    -- Защита от выхода за границы при резком изменении списка
     if scroll_offset < 0 then scroll_offset = 0 end
-  
-  elseif event == "scroll" then -- Колесико мыши
+    
+  elseif event == "key_up" then
+    local code = sig[4]
+    -- Если отпустили Ctrl, сбрасываем флаг
+    if code == 29 or code == 157 then
+      is_ctrl = false
+    end
+
+  elseif event == "scroll" then
     local direction = sig[5]
-    if direction > 0 then -- Вверх
+    if direction > 0 then
       if scroll_offset > 0 then scroll_offset = scroll_offset - 1 end
-    else -- Вниз
+    else
        if scroll_offset < (#items_list - view_size) then scroll_offset = scroll_offset + 1 end
     end
-  
   elseif event == "touch" then
-     -- Выход по клику в левый верхний угол (опционально)
      if sig[3] < 5 and sig[4] < 2 then break end
   end
 end
