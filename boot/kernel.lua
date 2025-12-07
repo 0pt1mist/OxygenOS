@@ -193,20 +193,47 @@ Syscalls.list = function(path)
   return hw.component.invoke(boot_addr, "list", path)
 end
 
--- Получение прокси компонента
+-- В /boot/kernel.lua
+
+-- [ИЩИ ЭТУ ФУНКЦИЮ И ЗАМЕНИ ЕЁ ЦЕЛИКОМ]
 Syscalls.device = function(dev_id)
-  -- dev_id может быть полным UUID или началом UUID
-  local full_addr = hw.component.get(dev_id)
-  if not full_addr then return nil, "Device not found" end
+  -- 1. Отладка входящих данных
+  Oxygen.ttyPrint("[KERN] Requesting device ID: " .. tostring(dev_id))
   
-  -- ZERO TRUST ПРОВЕРКА
-  -- Здесь можно добавить ACL (Access Control List)
-  -- Например: if type == "filesystem" and uid ~= 0 then return nil end
+  if not dev_id then return nil, "No ID provided" end
+
+  -- 2. Безопасное получение полного адреса
+  -- component.get может упасть, если ID некорректен, поэтому оборачиваем в pcall
+  local ok_addr, full_addr = pcall(hw.component.get, dev_id)
   
-  -- Возвращаем прокси
-  -- Важно: component.proxy возвращает таблицу. Мы можем обернуть её, 
-  -- чтобы запретить опасные методы (пока отдаем как есть).
-  return hw.component.proxy(full_addr)
+  if not ok_addr then
+    Oxygen.ttyPrint("[KERN] CRASH in component.get: " .. tostring(full_addr))
+    return nil, "Syscall Error (get)"
+  end
+
+  if not full_addr then 
+    Oxygen.ttyPrint("[KERN] Address not found for ID: " .. tostring(dev_id))
+    return nil, "Device not found" 
+  end
+
+  Oxygen.ttyPrint("[KERN] Resolved Address: " .. tostring(full_addr))
+
+  -- 3. Безопасное создание прокси
+  -- component.proxy может упасть, если адрес не существует или мало RAM
+  local ok_proxy, proxy = pcall(hw.component.proxy, full_addr)
+  
+  if not ok_proxy then
+     Oxygen.ttyPrint("[KERN] CRASH in component.proxy: " .. tostring(proxy))
+     return nil, "Syscall Error (proxy)"
+  end
+
+  if not proxy then
+    Oxygen.ttyPrint("[KERN] Proxy is nil (Unknown Error)")
+    return nil, "Proxy failed"
+  end
+
+  Oxygen.ttyPrint("[KERN] Proxy created successfully.")
+  return proxy
 end
 
 -- [7] EXEC (С обновленным Sandbox)
